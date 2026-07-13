@@ -1,7 +1,5 @@
 ---
 title: "Prepare Copernicus Imperviousness Density data"
-indicatorName: 
-  - INDICATOR_NAME # add more by adding another line starting '-'
 folderName: code # Leave to be filled out by ecRxiv during typesetting (name of the folder under 'indicators/'). 
 # If it's a single indicator being reported, the folder name should be the same as the indicatorID. 
 # If there are multiple ID's then the folder name could look something like XX_YYY_ZZZ-ÅÅÅ.
