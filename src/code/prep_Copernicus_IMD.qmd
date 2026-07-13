@@ -147,7 +147,7 @@ meta |>
 <!--# Document you work below.  -->
 
 ## 1. Summary
-This code shows how to download and pre-process data to compile the URGR indicators from ecRxiv: https://github.com/NINAnor/ecRxiv/tree/main/indicators/NO_URGR_001-005.
+This code shows how to download and pre-process Copernicus IMD data to compile the URGR indicators from ecRxiv: https://github.com/NINAnor/ecRxiv/tree/main/indicators/NO_URGR_001-005.
 
 
 ## 2. Data characteristics
