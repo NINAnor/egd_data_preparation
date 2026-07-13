@@ -283,11 +283,9 @@ meta <- meta |>
       "indicatorName" ~ "Indicator Name",
       "continent" ~ "Continent",
       "country" ~ "Country",
-      "ECT" ~ "Ecosystem Condition Typology Class",
       "yearAdded" ~ "Year added",
       "yearLastUpdate" ~ "Last update",
       "VersionComment" ~ "Version comment",
-      "SpatialAggregationPathway" ~ "Spatial aggregation pathway",
       default = Variable
     )
   ) |>
