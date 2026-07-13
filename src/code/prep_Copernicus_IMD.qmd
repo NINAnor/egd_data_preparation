@@ -1,5 +1,5 @@
 ---
-title: "Prepare Copernicus Imprviousness Density data"
+title: "Prepare Copernicus Imperviousness Density data"
 indicatorName: 
   - INDICATOR_NAME # add more by adding another line starting '-'
 folderName: code # Leave to be filled out by ecRxiv during typesetting (name of the folder under 'indicators/'). 
@@ -11,7 +11,7 @@ yearAdded: 2026 # the year when the indicator was first submitted to ecRxiv
 yearLastUpdate: 2026
 status: incomplete # options are complete, incomplete, or deprecated
 Version: "0.1.0" # See wiki page: https://github.com/NINAnor/ecRxiv/wiki#versioning
-VersionComment: First version. The code has been adapted from https://github.com/NINAnor/ecRxiv/tree/main/indicators/NO_URGR_001-005. Template taken from Anders Kolstad ecRxiv repository: https://github.com/NINAnor/ecRxiv.
+VersionComment: 'First version. The code has been adapted from https://github.com/NINAnor/ecRxiv/tree/main/indicators/NO_URGR_001-005. Template adapated from Anders Kolstad ecRxiv repository: https://github.com/NINAnor/ecRxiv.'
 url: https://github.com/NINAnor/egd_data_preparation
 # To be filled out by ecRxiv during the typesetting, when they will replace XX_YYYY_ZZ with the name of the root folder for the current indicator(s). It should be the same as the indicatorID, but if there are more indicator IDs presented in the same folder, the folder name might be different, e.g. XX_YYYY_AAA-BBB 
 format: 
@@ -57,10 +57,15 @@ library(knitr)
 library(tidyverse)
 library(kableExtra)
 library(here)
-library(anybadger)
 library(yaml)
 library(tibble)
 library(conflicted)
+library(tidyverse)
+library(dplyr)
+library(terra)
+library(carrier)
+library(mirai)
+
 # weird workarounds for cache issues
 conflicts_prefer(dplyr::filter)
 conflicts_prefer(dplyr::lag)
@@ -76,8 +81,10 @@ knitr::opts_chunk$set(echo = TRUE)
 ```{r source}
 #| echo: false
 #| cache: false
+
 source(here::here("_common.R"))
 ```
+
 
 ```{r reviewers}
 #| echo: false
@@ -102,44 +109,7 @@ if (!is.null(yaml_data$codeReviewers)) {
 }
 ```
 
-::: {layout-ncol="6"}
-
-```{r statusBadge}
-#| echo: false
-status_badge(as.character(st))
-```
-
-```{r versionBadge}
-#| echo: false
-version_badge(my_version_number = as.character(version[[1]]))
-```
-
-```{r dataBadge}
-#| echo: false
-data_badge(as.character(badges[[1]]))
-```
-
-```{r codeBadge}
-#| echo: false
-code_badge(as.character(badges[[2]]))
-```
-
-```{r openScienceBadge}
-#| echo: false
-open_science_badge(as.character(badges[[3]]))
-```
-
-```{r licenseBadge}
-#| echo: false
-# The following inserts a badge specifying the GPL GNU version 3 license. ecRxiv recommends using this license, but you can decide to use another. Contact ecRxiv for help in insert a badge for a different license
-license_badge()
-```
-
-
-::: 
- 
-
-> **Recommended citation**: `r paste(auth, " ", year, ". ", name, " (ID(s): ", folder_name, ") ", "v. ", version, ". ecRxiv: ", url, sep="")`
+> **Recommended citation**: `r paste(auth, " ", year, ". ", "v. ", version, ": ", url, sep="")`
 
 
 
@@ -156,18 +126,10 @@ meta |>
     "verbatimName",
     "Continent",
     "Country",
-    "Ecosystem Condition Typology Class", 
-    "Realm",
-    "Biome",
-    "Ecosystem",
-    "verbatimEcosystem",
     "Year added", 
     "Last update",
     "Version",
-    "Version comment",
-    "Normalised",
-    "Spatial aggregation pathway",
-    "Precision")) |>   
+    "Version comment")) |>   
   kable()
 
 ```
@@ -178,7 +140,7 @@ meta |>
 ## Log
 
 <!--# Update this logg with short messages for each update -->
-- 01 Jan. 1901 - Original PR
+- 13 July 2026 - First draft version
 :::
 
 
@@ -187,227 +149,227 @@ meta |>
 <!--# Document you work below.  -->
 
 ## 1. Summary
-
-<!--# 
-With a maximum of 300 words, describe the indicator in general terms as you would to a non-expert. Think of this as a kind of common language summary. Follow the four numbers sub-headers below. under point 2, it is possible under  include a bullet point list of the specific steps in the workflow. 
- -->
-
-1. **Background and rationale**:
-<!-- What does the metric represent? Why is this relevant for describing ecosystem condition in this ecosystem?
-What are the main anthropogenic impact factors? -->
-2. **Methods**:
-<!-- What kind of data is used? How is the data customized (modified, estimated, integrated) to fit its purpose as an indicator? -->
-3. **Interpretation**:
-<!-- Add a very short description of how the indicator values should be interpreted. Here's an example for a bumblebee indicator: An indicator value of 1 signifies an intact bumblebee community. Values decreasing toward zero reflect negative ecological change, specifically the decline of species expected to be present. This metric does not account for potentially positive changes, such as increases in species' abundance or the arrival of new species. Tip: Add text on the line directly following the subheader, and don't introduce blank lines. This way the whole paragraph renders as a block quote. -->
-An indicator value of 1 signifies ...
-Values decreasing toward zero reflect...
-
-4. **Results and development needs**:
-<!-- Briefly, what does the indicator say about the ecosystem condition. What is the current status of  the metric (can it be used or is it still in development), and what immediate tasks remain to improve the indicator or to make the indicator operational -->
+This code shows how to download and pre-process data to compile the URGR indicators from ecRxiv: https://github.com/NINAnor/ecRxiv/tree/main/indicators/NO_URGR_001-005.
 
 
+## 2. Data characteristics
 
-## 2. About the underlying data
-
-<!--# Give a general introduction the datasets you have used, and provide more specific details in the sub-chapters.  -->
+These data are produced by Copernicus: https://land.copernicus.eu/en/products/high-resolution-layer-imperviousness.
 
 ### 2.1 Spatial and temporal resolution and extent
 
-<!--# Describe the temporal and spatial resolution and extent of the data used -->
+We downloaded the data for the whole on Norway (excluding Svalbård), for the years 2018, 2021, and 2024. Spatial resolution is 10m.
 
 ### 2.2 Sampling design
 
-<!-- How was the data sampled? Describe potential sampling biases -->
+The Imperviousness data are generated using state-of-the-art automated image processing 
+methods that are applied to systematically acquired, high-resolution satellite image time series 
+from the Copernicus space segment (i.e. Sentinel-2). See [Algorithm Teoretical Basis Document](https://land.copernicus.eu/en/technical-library/algorithm-theoretical-basis-document-high-resolution-layer-imperviousness-2024/@@download/file)
 
 ### 2.3 Original units
-
-<!--# What are the original units for the most relevant  variables in the data-->
+Sentinel-2 data are 10m resolution. The Imperviousness data we downloaded match this resolution.
 
 
 ### 2.4 Instructions for citing, using and accessing data
+Openly available[here](https://land.copernicus.eu/en/products/high-resolution-layer-imperviousness/imperviousness-density-2024#download)
 
-<!--# Is the data openly available? If not, how can one access it? What are the key references to the datasets?   -->
 
 ### 2.5 Additional comments about the dataset
-
-<!--# Optional. Text here -->
-
-## 3. Indicator properties
-
-### 3.1 Ecosystem Condition Typology Class (ECT)
-
-<!--# Describe the rationale for assigning the indicator to the ECT class. See https://oneecosystem.pensoft.net/article/58218/
-This doesnt need to be very long. Maybe just a single sentence. -->
-
-### 3.1.1 Other condition typologies
-
-<!--# Optional: Add text about other standards or typologies, such as alternative national condition typologies, and how the indicator relates to these -->
+Other metadata can be found in the [User manual](https://land.copernicus.eu/en/technical-library/product-user-manual-high-resolution-layer-imperviousness-2024/@@download/file)
 
 
-### 3.2 Ecosystem condition characteristic
+## 3. Uncertainties
+### 3.1 General uncertainties
+Uncertainties have several sources all taking roots in the modelling used to process the Sentinel-d raw data. They can come from the pre-processing of the raw data necessary to correct the images (e.g., radiometrical/sensor calibration; geophysical corrections; cloud cover corrections;creation of the mosaic). But they also arise when the pre-processed data are classified through machine learning to produce the final layer of imperviousness. Classification is never definitive and produces probabilities for a pixel to belong to a specific class.
 
-<!--# 
+### 3.2 Reported uncertainties
+Copernicus reported "Confidence layers" for each of the Imperviousness datasets. In their technical guide, they explain that, to compile this iondicator of uncertainty, the U-Net classification model is applied multiple times using different models from nearby tiles. The resulting standard deviation of the predictions is used as an indicator for the classification of confidence per pixel.
 
-A short (one to three word) tag or name for the ecosystem condition characteristic represented in the indicator. See 10.3897/oneeco.6.e58218 for information on what these characteristics might be.
+A standard deviation of 0 indicating full agreement across all model predictions is always mapped to the maximum confidence value of 100. Conversely, the minimum confidence value of 50 is assigned when there is maximum disagreement, specifically when half of the binary classified predictions (based on a 50% density threshold) are 0 and the other half are 1. This ensures the confidence values reflect the level of consensus among models in a consistent and interpretable way.
 
-Examples: 'intact hydrology'; 'near-natural species composition'; 'soil stability'; sustainable trophic interactions'. 
+The confidence indicator is pixel-based. So each pixel has a different confidence value. 75-100 is considered as "High confidence", 50-75 as "Moderate confidence" and <50 is considered as "Low confidence".
 
-The term 'characteristic' is used in a similar way  to the term 'criteria' in Multiple Criteria Decision Making.  
-
--->
-
-### 3.3 Collinearities with other indicators
-
-<!--# Describe known collinearities with other metrics (indicators or variables) that could become problematic if they were also included in the same Ecosystem Condition Assessment as the indicator described here. -->
+The confidence layres were only available for 2021 and 2024.
 
 
-### 3.4 Impact factors
+## 4. Data download
 
-<!--# Describe the main natural and anthropogenic factors that affecst the metric -->
+### 4.1 Copernicus IMD
+Copernicus IMD for years 2018, 2021, and 2024 have been downloaded through the [Copernicus platform](https://land.copernicus.eu/en/map-viewer?dataset=0b1406290f6948c6b8cfac829119610b). There, users can just select the NUTS level for they wish to download the data. In our case it was NUTS1 - Norway. A request is put through Copernicus team and processed. A link to the zip file containing data is then sent by email. The timeframe for this process can vary depending on the amount of users requesting data. Alternatively these data can also be downloaded through an API request using [WEkEO](https://help.wekeo.eu/en/articles/6416936-how-to-download-data-through-wekeo). Having experienced a lot of trouble shooting when using an API request for Tree Cover Density layers of Copernicus layers in the past, we decided to send a manual request for IMD layers. The request was processed in 3h. The data were uploaded on NINA's internal servers due to their size.
 
-### 3.5 Spatial aggregation
+For transparency, we show below a code to read the raster data from the zip files that are given by Copernicus. 
+*!Attention: this code, writes the rasters on the disk of the users.*
+```{r}
+#| eval: false
+#| code-summary: "Read the .tif from a zip file"
 
-<!-- Describe in word the same aggregation pathway presented in the top yaml (the metadata). If you have scaled against the reference value, it is especially important to know if you did any avergaing or summations etc. beforehand. An example text for a rather simple case could be: "The variable is scaled at the initial polygon level and the point estimate is a area-weighted arithmetic mean of all polygins. There is no transformation, and truncation is not needed as the indicator becomes naturally bound between 0 and 1".  -->
+# Call functions
+source(here::here("src", "functions", "list_zip_files.R"))
+source(here::here("src", "functions", "extract_zip_files.R"))
 
-## 4. Reference condition and levels
+# Path to the downloaded Copernicus data
+path_imd <- "/data/P-Prosjekter2/412413_2023_no_egd/git_data/IMD_Copernicus"
 
-### 4.1 Reference condition
+# List datasets' paths to read and their names
+files_imd_read <- files_list_sev_fn(path_imd)
 
-<!--# Define the reference condition (or refer to where it is defined). Note the distinction between reference condition and reference levels 10.3897/oneeco.5.e58216  -->
+# List datasets path (here we remove the zip marker and the name of the file)
+files_imd_write <- str_remove(files_imd_read[[1]], "CLMS.*") %>%
+                      str_remove("/vsizip/\\{")
 
-### 4.2 Reference levels
+# Run the function to read and write the rasters from the zip files directly
+library(mirai)
+daemons(10)
+map(seq_along(files_imd_read[[1]]),
+    in_parallel( ~process_raster_fn(path_read = files_imd_read[[1]][.x],
+                                    path_write = files_imd_write[.x],
+                                    files_names = files_imd_read[[2]][.x]),
+                 process_raster_fn = process_raster_fn,
+                 files_imd_read = files_imd_read,
+                 files_imd_write = files_imd_write
+    )
+)
 
-<!--# 
+daemons(0)
 
-If relevant (i.e. if you have normalised a variable), describe the reference levels used to normalise the variable. 
+```
 
-Use the terminology where X~0~ refers to the reference level (the variable value) denoting the worst possible condition; X~100~denotes the optimum or best possible condition; and X~*n*~, where in is between 0 and 100, denotes any other anchoring points linking the variable scale to the indicator scale (e.g. the threshold value between good and bad condition X~60^). 
+### 4.2 Copernicus IMD Confidence layers
+Now we do the same for the confidence layers.
+```{r}
+#| eval: false
+#| code-summary: "Read the .tif from a zip file"
 
-Why was the current option chosen and how were the reference levels quantified? If the reference values are calculated as part of the analyses further down, please repeat the main information here.
+# Call functions
+source(here::here("src", "functions", "list_zip_files.R"))
+source(here::here("src", "functions", "extract_zip_files.R"))
 
- -->
+# Path to the downloaded Copernicus data
+path_imd_unc <- "/data/P-Prosjekter2/412413_2023_no_egd/git_data/IMD_Copernicus_uncertainties"
+
+# List datasets' paths to read and their names
+files_imd_read <- files_list_sev_fn(path_imd_unc)
+
+# List datasets path (here we remove the zip marker and the name of the file)
+files_imd_write <- str_remove(files_imd_read[[1]], "CLMS.*") %>%
+                      str_remove("/vsizip/\\{")
+
+# Run the function to read and write the rasters from the zip files directly
+library(mirai)
+daemons(10)
+map(seq_along(files_imd_read[[1]]),
+    in_parallel( ~process_raster_fn(path_read = files_imd_read[[1]][.x],
+                                    path_write = files_imd_write[.x],
+                                    files_names = files_imd_read[[2]][.x]),
+                 process_raster_fn = process_raster_fn,
+                 files_imd_read = files_imd_read,
+                 files_imd_write = files_imd_write
+    )
+)
+
+daemons(0)
+
+```
 
 
-#### 4.2.1 Spatial resolution and validity
 
-<!--# 
+## 5. Data cleaning and formatting
+Once the rasters (.tf) have been extracted and written on the disk, they can be read to create a virtual raster that will be used for the subsequent analyses later on.
 
-Describe the spatial resolution of the reference levels. E.g. is it defined as a fixed value for all areas, or does it vary. Also, at what spatial scale are the reference levels valid? For example, if the reference levels have a regional resolution (varies between regions), it might mean that it is only valid and correct to use for normalising local variable values that are first aggregated to regional scale. However, sometimes the reference levels are insensitive to this and can be used to scale variables at the local (e.g. plot) scale. 
+### 5.1 Copernicus IMD
 
- -->
+```{r}
+#| eval: false
+#| code-summary: "Create Copernicus IMD virtual raster"
 
-## 5. Uncertainties
-### 5.1 General uncertainties
-<!--# Describe the main reasons why you might not trust 100% the final value to represent the given ecosystem characteristic for the give ecosystem type. What aspects of this condition metric are most sensitive to subjective decitions? Is the spatial sampling sufficient? Does the choice of modeling framework affect the values? Is the metric relevant do describe ecosystem condition for the give ecosystem type?  -->
+# Code co-created by Sylvie Clappe and Balint Czucz
 
-### 5.2 Reported uncertainties
-<!-- Describe the nature of the errors you (hopefully) provide alongside the point estimate for the condition metric. It is especially important to clarify if the errors are inferential (referring to the uncertainty of the point estimate) or descriptive (referreing to the data itself). Here' an example text: "What we report as uncertainties in @tbl-finalTable are inferential and refer to the uncertainty around the point estimates. It does not directly describe variation in the data itself. 
-However, the variation in the mean is defined by the spatial variation only, and quartiles are obtained by bootstrapping the set of localities within a region, and calculating the indicator for each of 9999 such samples".   -->
+# Create or load the IMD virtual rasters
+terra::setGDALconfig("GTIFF_SRS_SOURCE", "EPSG") # to quiet a GDAL warning
+path_imd_list <- dir(path_imd, recursive = FALSE, full.names = TRUE)
+yrs_imd <- str_sub(path_imd_list, start = -4)
+file_imd <- map_vec(seq_along(path_imd_list), function(i){paste0(path_imd_list[i], "/IMD_", yrs_imd[i], ".vrt")})
+
+imd_vrt <- map(seq_along(file_imd), ~ 
+               
+                # if it does not exist yet, create the virtual raster
+               if (!file.exists(file_imd[.x])) {
+                    path_imd_list[.x] %>%
+                    list.files(pattern= '.tif$', all.files= TRUE, full.names= TRUE) %>% # list of tiles
+                    vrt(filename= file_imd[.x]) 
+                 
+                # otherwise just load it 
+               } else {
+                rast(file_imd[.x])  
+               }
+               
+              )
+
+```
 
 
+### 5.2 Copernicus IMD Confidence layers
+```{r}
+#| eval: false
+#| code-summary: "Create Copernicus IMD confidence virtual raster"
 
-## 6. References
+# Code co-created by Sylvie Clappe and Balint Czucz
 
-<!--# You can add references manually or use a citation manager and add intext citations as with crossreferencing and hyperlinks. See https://quarto.org/docs/authoring/footnotes-and-citations.html -->
+# Create or load the IMD virtual rasters
+terra::setGDALconfig("GTIFF_SRS_SOURCE", "EPSG") # to quiet a GDAL warning
+path_imd_list <- dir(path_imd_unc, recursive = FALSE, full.names = TRUE)
+yrs_imd <- str_sub(path_imd_list, start = -4)
+file_imd <- map_vec(seq_along(path_imd_list), function(i){paste0(path_imd_list[i], "/IMD_", yrs_imd[i], ".vrt")})
 
-## 7. Import and prepare datasets
+imd_vrt <- map(seq_along(file_imd), ~ 
+               
+                # if it does not exist yet, create the virtual raster
+               if (!file.exists(file_imd[.x])) {
+                    path_imd_list[.x] %>%
+                    list.files(pattern= '.tif$', all.files= TRUE, full.names= TRUE) %>% # list of tiles
+                    vrt(filename= file_imd[.x]) 
+                 
+                # otherwise just load it 
+               } else {
+                rast(file_imd[.x])  
+               }
+               
+              )
 
-<!--# All the data import and preparation should be done in this chapter, before the analysis chapter. As a minimum, add code for importing data, and describe or show the data structure. You may also explain certain variables, what they represent, and their distributions -->
+```
 
-### 7.1 Dataset A
 
-<!--# Import and prepare the first dataset for analysis. Change the header from Dataset A to the name of the actual dataset. -->
-
-### 7.2. Dataset B
-
-<!--# Repeat the process for each dataset -->
-
-## 8. Spatial units
-
-<!--# Describe the spatial units that you rely on in your analyses. Highlight the spatial units (the resolution) that the indicator values should be interpreted at. Potential spatial delineation data (maksing layers etc.) should be introduced under chapert 7. We recommend using the SEEA EA terminology of Basic Spatial Units (BSU), Ecosystem Asses (EA) and Ecosystem Accounting Area (EAA). -->
-
-## 9. Analyses
-
-<!--# 
-
-Use this header for documenting the analyses. Put code in separate code chunks, and annotate the code in between using normal text (i.e. between the chunks, and try to avoid too many hashed out comments inside the code chunks). Add subheaders as needed. 
-
-Code folding is activated, meaning the code will be hidden by default in the html (one can click to expand it).
-
-Caching is also activated (from the top YAML), meaning that rendering to html will be quicker the second time you do it. This will create a folder inside you project folder (called INDICATORID_cache). Sometimes caching created problems because some operations are not rerun when they should be rerun. Try deleting the cash folder and try again.
-
--->
-
-## 10. Results
-
-<!--# 
-
-Repeat the final results here. Typically this is a map or table of indicator values.
-
-This is typically where people will harvest data from, so make sure to include all relevant output here, but don't clutter this section with too much output either.
-
--->
-
-## 11. Export file
-
-<!--# 
-
-Optional: Display the code (don't execute it) or the workflow for exporting the indicator values to file. Ideally the indicator values are exported as a georeferenced shape or raster file with indicators values, reference values and errors. You can also chose to export the raw (un-normalised or unscaled variable) as a separate product. You should not save large sptaial output data on GitHub. You can use eval=FALSE to avoid code from being executed (example below - delete if not relevant) 
-
--->
+## 6. Export file
+Virtual raster already exported in the previous code.
 
 ```{r export}
 #| eval: false
 ```
 
 
-## 12. Author contributions
+## 7. Author contributions
 
 <!-- Fill in CReDIT and MeRIT statments to clarify the contributions from individual authors. For MeRIT, see https://www.nature.com/articles/s41467-023-37039-1. For CRedit, see https://credit.niso.org/. You can start with the template structur below, and just delete the rows you dont use.  -->
 
 **CRediT statement**
 
-* Conceptualization: [Initials]
-* Methodology: [Initials]
-* Data curation: [Initials]
-* Formal analysis: [Initials]
-* Investigation: [Initials]
-* Software: [Initials]
-* Validation: [Initials]
-* Visualization: [Initials]
-* Resources: [Initials]
-* Writing – original draft: [Initials]
-* Writing – review & editing: [Initials]
-* Supervision: [Initials]
-* Project administration: [Initials]
-* Funding acquisition: [Initials]
+* Conceptualization: SC
+* Methodology: SC & BC
+* Data curation & formatting: SC
+* Writing – original draft: SC
+* Writing – review & editing: BC
+* Document structure: SC & AK
 
 
 **MeRIT attribution**
 
-This part supplements the CRediT statement with more granularity for method section.
+The structure of the document has been taken from ecRxiv's template for condition indicators, created by Anders Kolstad (AK). SC adapted it to the purpose of the project.
 
 **Study design**
-The study was designed by [AB, CD].
-
-**Data collection / fieldwork**
-Field data were collected by [AB, EF] between [years]. Sampling protocol was developed by [CD].
-
-**Laboratory procedures**
-DNA extraction was performed by [GH]. Sequencing was conducted by [IJ].
+The study was designed by SC and BC.
 
 **Data processing**
-Raw data were curated and cleaned by [EF]. Code for preprocessing was written by [KL].
-
-**Statistical analysis**
-All analyses were conducted by [CD] using [software], with verification by [AB].
-
-**Visualization**
-Figures were produced by [KL], with input from [CD].
-
-**Reproducibility**
-All code was reviewed and validated by [AB, CD].
-
+Raw data were downloaded by SC. They were curated and cleaned by SC and BC. Code was written by both SC and BC.
 
 
 ::: {.callout-tip collapse="true"}
