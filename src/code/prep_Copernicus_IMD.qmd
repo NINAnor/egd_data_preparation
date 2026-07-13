@@ -159,13 +159,14 @@ These data are produced by Copernicus: https://land.copernicus.eu/en/products/hi
 We downloaded the data for the whole on Norway (excluding Svalbård), for the years 2018, 2021, and 2024. Spatial resolution is 10m.
 
 ### 2.2 Sampling design
-
 The Imperviousness data are generated using state-of-the-art automated image processing 
 methods that are applied to systematically acquired, high-resolution satellite image time series 
-from the Copernicus space segment (i.e. Sentinel-2). See [Algorithm Teoretical Basis Document](https://land.copernicus.eu/en/technical-library/algorithm-theoretical-basis-document-high-resolution-layer-imperviousness-2024/@@download/file)
+from the Copernicus space segment (i.e. Sentinel-2). See [Algorithm Teoretical Basis Document](https://land.copernicus.eu/en/technical-library/algorithm-theoretical-basis-document-high-resolution-layer-imperviousness-2024/@@download/file).
+
+There has been significant changes is data processing between 2018, 2021 and 2024. First, 2021 and 2024 layers have been merged with CLC+ BackBone sealed layer. This ensures comparability between the two Copernicus products. Copernicus IMD 2018 however has not be merged with CLC+ BackBone sealed layer. Years 2021 and 2024 have been produced with the same convolutional neural network called U-Net, while the model used for 2018 is not specified in the metadata but is stated as being different. Finally, the threshold of prediction for an imperviousness density to be reported in a pixel was 90% in 2021 but 70% in 2024. This means that care should be taken when using these data for temporal series analyses. To ensure consistency across time, it would have been preferable to use the Imperviousness change layers that are designed to be homogeneous over time, correcting for the different changes in methodology. However, these layers are only available at 20m resolution. Downscaling theses layers to 10m or upscaling the original layers of Imperviousness to 20m would results in additional uncertainties.
 
 ### 2.3 Original units
-Sentinel-2 data are 10m resolution. The Imperviousness data we downloaded match this resolution.
+Sentinel-2 data are 10m resolution. The Imperviousness data we downloaded match this resolution (10m x 10m).
 
 
 ### 2.4 Instructions for citing, using and accessing data
@@ -178,10 +179,10 @@ Other metadata can be found in the [User manual](https://land.copernicus.eu/en/t
 
 ## 3. Uncertainties
 ### 3.1 General uncertainties
-Uncertainties have several sources all taking roots in the modelling used to process the Sentinel-d raw data. They can come from the pre-processing of the raw data necessary to correct the images (e.g., radiometrical/sensor calibration; geophysical corrections; cloud cover corrections;creation of the mosaic). But they also arise when the pre-processed data are classified through machine learning to produce the final layer of imperviousness. Classification is never definitive and produces probabilities for a pixel to belong to a specific class.
+Uncertainties have several sources all taking roots in the modelling used to process the Sentinel-d raw data. They can come from the pre-processing of the raw data necessary to correct the images (e.g., radiometrical/sensor calibration; geophysical corrections; cloud cover corrections;creation of the mosaic). But they also arise when the pre-processed data are classified through machine learning to produce the final layer of imperviousness. Classification is never definitive and produces probabilities for a pixel to belong to a specific class. In addition, there has been significant methodology changes between the 3 years downloaded: 2018, 2021, and 2024. Care shoul be taken when comparing imperviousness across years.
 
 ### 3.2 Reported uncertainties
-Copernicus reported "Confidence layers" for each of the Imperviousness datasets. In their technical guide, they explain that, to compile this iondicator of uncertainty, the U-Net classification model is applied multiple times using different models from nearby tiles. The resulting standard deviation of the predictions is used as an indicator for the classification of confidence per pixel.
+Copernicus reported "Confidence layers" for each of the Imperviousness datasets. In their technical guide, they explain that, to compile this indicator of uncertainty, the U-Net classification model is applied multiple times using different models from nearby tiles. The resulting standard deviation of the predictions is used as an indicator for the classification of confidence per pixel.
 
 A standard deviation of 0 indicating full agreement across all model predictions is always mapped to the maximum confidence value of 100. Conversely, the minimum confidence value of 50 is assigned when there is maximum disagreement, specifically when half of the binary classified predictions (based on a 50% density threshold) are 0 and the other half are 1. This ensures the confidence values reflect the level of consensus among models in a consistent and interpretable way.
 
