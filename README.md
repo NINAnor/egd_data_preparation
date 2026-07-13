@@ -46,9 +46,11 @@ library(sf)
 ## Functions
 XX functions have been created for the purposes of this code:
 
--
+- extract_zip_files.R: script creating virtual rasters.
+- list_zip_files.R: script extracting the raster files from .zip files.
 
 ## Running the code
-XX scripts have been designed:
+Two scripts have been designed:
 
-- 
+- prep_Copernicus_IMD.qmd : script pre-processing Copernicus IMD for URGR condition indicators.
+- prep_Grunnkart.qmd: script pre-processing the grunnkart for URGR, URAQ and TCCD condition indicators.
