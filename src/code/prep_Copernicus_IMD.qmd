@@ -341,11 +341,6 @@ imd_vrt <- map(seq_along(file_imd), ~
 ## 6. Export file
 Virtual raster already exported in the previous code.
 
-```{r export}
-#| eval: false
-```
-
-
 ## 7. Author contributions
 
 <!-- Fill in CReDIT and MeRIT statments to clarify the contributions from individual authors. For MeRIT, see https://www.nature.com/articles/s41467-023-37039-1. For CRedit, see https://credit.niso.org/. You can start with the template structur below, and just delete the rows you dont use.  -->
