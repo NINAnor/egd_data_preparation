@@ -1,14 +1,3 @@
----
-title: "README"
-author: "Sylvie Clappe"
-date: "`r Sys.Date()`"
-format: html
-editor: source
-theme: 
-  light: flatly
-  dark: darkly
----
-
 ## Purpose of this document
 This document gives brief information on project 112644 -  Ferdigstilling av indikatorer til Eurostat og nasjonalt naturregnskap. It also provides information on how to run the code, the data, packages and functions used.
 
