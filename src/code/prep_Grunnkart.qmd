@@ -61,7 +61,7 @@ library(tibble)
 library(conflicted)
 library(tidyverse)
 library(dplyr)
-library(terra)
+library(sf)
 library(carrier)
 library(mirai)
 
@@ -152,15 +152,10 @@ This code shows how to download and pre-process Grunnkart data to compile the UR
 
 
 ## 2. Data characteristics
-
 Grunnkart is Norway's official *ecosystem type map* designed to support ecosystem accounting (@strand2024; @gk2). It is produced by NIBIO and SSB.
 
 ### 2.1 Spatial and temporal resolution and extent
 Spatial resolution is not determined in the metadata, so is temporal resolution. The data are a composite of several datasets from different spatial and temporal resolution. For the purpose of our work, we will assume that the data are from 2025 as it is the date of its release.
-
-
-| **Grunnkart**  | No, only upon request to Grunnkart is produced by [NIBIO](https://kartkatalog.geonorge.no/metadata/nasjonalt-grunnkart-for-arealanalyse-testversjon-2/28c28e3a-d88f-4a34-8c60-5efe6d56a44d) | We used testversion 0.2, description available in @strand2024 and @gk2 |
-
 
 
 ### 2.2 Sampling design
@@ -186,154 +181,245 @@ These data have various sources of uncertainties but they could not be quantifie
 Uncertainties related to this dataset were not quantified or reported by NIBIO.
 
 
-## 4. Data download
-The Grunnkart is a a big dataset and, for NINA, these data were only available upon request. This means that we could not read them using an API and they had to be downloaded and stored on NINA's internal servers directly.
+## 4. Load the data
+The Grunnkart is a a big dataset and, for NINA, these data were only available upon request. This means that we could not read them using an API and they had to be downloaded and stored on NINA's internal servers directly. 
 
-<!-- ```{r} -->
-<!-- #| eval: false -->
-<!-- #| code-summary: "Read the .tif from a zip file" -->
+From experience, there are many geometrical issues with the Grunnkart that need to be fixed. In order to do that properly, we need to ensure that a copy of the raw data remains somewhere, untouched. That is why the loading of the data is just about loading the orginial version of the data, without doing any pre-cleaning, including re-projection of the tiles that are not in EPSG:25832. This strategy though puts a strain on the memory, that is why we then save the raw data as a geopackage file that we can read in later on. It is necessary to keep the raw data as the transformations that will be required to clean the data may create empty geometries despite the geometry being present in the raw data. So it is important to keep the raw data to help correct these issues. 
 
-<!-- # Call functions -->
-<!-- source(here::here("src", "functions", "list_zip_files.R")) -->
-<!-- source(here::here("src", "functions", "extract_zip_files.R")) -->
+*This step can be skipped if the .gpkg has already been created*.
 
-<!-- # Path to the downloaded Copernicus data -->
-<!-- path_imd <- "/data/P-Prosjekter2/412413_2023_no_egd/git_data/IMD_Copernicus" -->
+```{r}
+#| eval: false
+#| code-summary: "Read the sf objects from gdb"
+# Code co-created by Sylvie Clappe and Jennifer Hansen
 
-<!-- # List datasets' paths to read and their names -->
-<!-- files_imd_read <- files_list_sev_fn(path_imd) -->
+# Call a function to read gdb files
+source(here::here("src", "functions", "read_gdb_files.R"))
 
-<!-- # List datasets path (here we remove the zip marker and the name of the file) -->
-<!-- files_imd_write <- str_remove(files_imd_read[[1]], "CLMS.*") %>% -->
-<!--                       str_remove("/vsizip/\\{") -->
+# Path to the Grunnkart  
+gdb_folder <- "/data/R/GeoSpatialData/LandUse/Norway_Arealregnskap/Original/GrunnkartArealregnskap FGDB-format"
 
-<!-- # Run the function to read and write the rasters from the zip files directly -->
-<!-- library(mirai) -->
-<!-- daemons(10) -->
-<!-- map(seq_along(files_imd_read[[1]]), -->
-<!--     in_parallel( ~process_raster_fn(path_read = files_imd_read[[1]][.x], -->
-<!--                                     path_write = files_imd_write[.x], -->
-<!--                                     files_names = files_imd_read[[2]][.x]), -->
-<!--                  process_raster_fn = process_raster_fn, -->
-<!--                  files_imd_read = files_imd_read, -->
-<!--                  files_imd_write = files_imd_write -->
-<!--     ) -->
-<!-- ) -->
+# List the gdb files
+gdb_files <- list.files(gdb_folder, pattern = "_gdb\\.gdb$", 
+                        full.names = TRUE)
 
-<!-- daemons(0) -->
+# Read data with gdb files
+gk_rw_data <- gdb_files %>% 
+                 map(\(.) read_gdb(.)) 
 
-<!-- ``` -->
+# Name the layers
+names(gk_rw_data) <- str_extract(gdb_files, "(?<=format/).{2}")
 
-<!-- ### 4.2 Copernicus IMD Confidence layers -->
-<!-- Now we do the same for the confidence layers. -->
-<!-- ```{r} -->
-<!-- #| eval: false -->
-<!-- #| code-summary: "Read the .tif from a zip file" -->
+# Save an RDS copy on scratch
+# Path to the result geopackage
+gpkg_path <- paste0(str_remove(tempdir(), "Rtmp\\w*"), "GK_raw/GK_raw_layer.gpkg")
 
-<!-- # Call functions -->
-<!-- source(here::here("src", "functions", "list_zip_files.R")) -->
-<!-- source(here::here("src", "functions", "extract_zip_files.R")) -->
-
-<!-- # Path to the downloaded Copernicus data -->
-<!-- path_imd_unc <- "/data/P-Prosjekter2/412413_2023_no_egd/git_data/IMD_Copernicus_uncertainties" -->
-
-<!-- # List datasets' paths to read and their names -->
-<!-- files_imd_read <- files_list_sev_fn(path_imd_unc) -->
-
-<!-- # List datasets path (here we remove the zip marker and the name of the file) -->
-<!-- files_imd_write <- str_remove(files_imd_read[[1]], "CLMS.*") %>% -->
-<!--                       str_remove("/vsizip/\\{") -->
-
-<!-- # Run the function to read and write the rasters from the zip files directly -->
-<!-- library(mirai) -->
-<!-- daemons(10) -->
-<!-- map(seq_along(files_imd_read[[1]]), -->
-<!--     in_parallel( ~process_raster_fn(path_read = files_imd_read[[1]][.x], -->
-<!--                                     path_write = files_imd_write[.x], -->
-<!--                                     files_names = files_imd_read[[2]][.x]), -->
-<!--                  process_raster_fn = process_raster_fn, -->
-<!--                  files_imd_read = files_imd_read, -->
-<!--                  files_imd_write = files_imd_write -->
-<!--     ) -->
-<!-- ) -->
-
-<!-- daemons(0) -->
-
-<!-- ``` -->
+iwalk(gk_rw_data, function(layer, name) {
+        st_write(obj = layer,
+                 dsn = gpkg_path,
+                 layer = name,   
+                 append = FALSE,    
+                 delete_layer = TRUE)})
 
 
+# Clean R environment
+rm(list=setdiff(ls(), c("pull",
+                        "gpkg_path",
+                        "gdb_files")))
 
-<!-- ## 5. Data cleaning and formatting -->
-<!-- Once the rasters (.tf) have been extracted and written on the disk, they can be read to create a virtual raster that will be used for the subsequent analyses later on. -->
+```
 
-<!-- ### 5.1 Copernicus IMD -->
-
-<!-- ```{r} -->
-<!-- #| eval: false -->
-<!-- #| code-summary: "Create Copernicus IMD virtual raster" -->
-
-<!-- # Code co-created by Sylvie Clappe and Balint Czucz -->
-
-<!-- # Create or load the IMD virtual rasters -->
-<!-- terra::setGDALconfig("GTIFF_SRS_SOURCE", "EPSG") # to quiet a GDAL warning -->
-<!-- path_imd_list <- dir(path_imd, recursive = FALSE, full.names = TRUE) -->
-<!-- yrs_imd <- str_sub(path_imd_list, start = -4) -->
-<!-- file_imd <- map_vec(seq_along(path_imd_list), function(i){paste0(path_imd_list[i], "/IMD_", yrs_imd[i], ".vrt")}) -->
-
-<!-- imd_vrt <- map(seq_along(file_imd), ~  -->
-
-<!--                 # if it does not exist yet, create the virtual raster -->
-<!--                if (!file.exists(file_imd[.x])) { -->
-<!--                     path_imd_list[.x] %>% -->
-<!--                     list.files(pattern= '.tif$', all.files= TRUE, full.names= TRUE) %>% # list of tiles -->
-<!--                     vrt(filename= file_imd[.x])  -->
-
-<!--                 # otherwise just load it  -->
-<!--                } else { -->
-<!--                 rast(file_imd[.x])   -->
-<!--                } -->
-
-<!--               ) -->
-
-<!-- ``` -->
+Now that we the raw data, we can move on to the cleaning and formatting step.
 
 
-<!-- ### 5.2 Copernicus IMD Confidence layers -->
-<!-- ```{r} -->
-<!-- #| eval: false -->
-<!-- #| code-summary: "Create Copernicus IMD confidence virtual raster" -->
+## 5. Data cleaning and formatting
+*Note: most of the code could not be run in parallel due to the size of the data. `in_parallel()` copies the data to each deamon used, while `future_map()` is not advised when the data are too big as moving them to the GlobalEnv once the operation is finished will take a lot of time, ruining the time you gain by running the operations in parallel.*
 
-<!-- # Code co-created by Sylvie Clappe and Balint Czucz -->
+First we need to re-project the tiles that are not in EPSG:25832. This CRS was chosen as it is the one most tiles had. We re-project but still keep the tiles separated. We also write a geopackage as well to keep these data to solve issues if any occur during the cleaning process.
+```{r}
+#| eval: false
+#| code-summary: "Re-projection to EPSG:25832"
 
-<!-- # Create or load the IMD virtual rasters -->
-<!-- terra::setGDALconfig("GTIFF_SRS_SOURCE", "EPSG") # to quiet a GDAL warning -->
-<!-- path_imd_list <- dir(path_imd_unc, recursive = FALSE, full.names = TRUE) -->
-<!-- yrs_imd <- str_sub(path_imd_list, start = -4) -->
-<!-- file_imd <- map_vec(seq_along(path_imd_list), function(i){paste0(path_imd_list[i], "/IMD_", yrs_imd[i], ".vrt")}) -->
+# Read RDS file with raw data
+gk_rw_data <- st_read(gpkg_path)
 
-<!-- imd_vrt <- map(seq_along(file_imd), ~  -->
 
-<!--                 # if it does not exist yet, create the virtual raster -->
-<!--                if (!file.exists(file_imd[.x])) { -->
-<!--                     path_imd_list[.x] %>% -->
-<!--                     list.files(pattern= '.tif$', all.files= TRUE, full.names= TRUE) %>% # list of tiles -->
-<!--                     vrt(filename= file_imd[.x])  -->
+# Define CRS of the first layer (most common CRS of the gdb files)
+gk_crs <- st_crs(gk_rw_data [[1]])
 
-<!--                 # otherwise just load it  -->
-<!--                } else { -->
-<!--                 rast(file_imd[.x])   -->
-<!--                } -->
 
-<!--               ) -->
+# Re-project if needed
+gk_data <- map(gk_rw_data, 
+               function(i){
+  
+  if(st_crs(i) != gk_crs){
+  st_transform(i, crs = gk_crs)
+    
+}else{
+  i
+}})
 
-<!-- ``` -->
+# Path to the result geopackage
+gpkg_path_proj <- paste0(str_remove(tempdir(), "Rtmp\\w*"), "GK_raw/GK_projected_layer.gpkg")
+
+# Save as gpkg
+iwalk(gk_data, function(layer, name) {
+        st_write(obj = layer,
+                 dsn = gpkg_path_proj,
+                 layer = name,   
+                 append = FALSE,    
+                 delete_layer = TRUE)})
+
+# Read if dataset already available
+layer_names <- st_layers(gpkg_path_proj)$name
+gk_data <- map(layer_names, ~st_read(gpkg_path_proj, layer = .x, quiet = TRUE))
+names(gk_data) <- str_extract(gdb_files, "(?<=format/).{2}")
+
+
+# Clean R environment
+rm(list=setdiff(ls(), c("pull",
+                        "gdb_files",
+                        "gpkg_path",
+                        "gpkg_path_proj")))
+
+```
+
+We then re-calculate the area of the polygons. If the newly calculated area under 0.05 m2, we compare it with the area from the original dataset. We chose the threshold arbitrarily as the Grunnkart doesn't have any MMU. We isolate these polygons and check if they are slivers by randomly inspecting some in QGIS. If they are slivers, we delete them. This needs to be done prior to fixing any geometrical issue as they can cause `st_make_valid()` to fail, split into multi-geometries, or generate anomalous dimensions. We export this intermediate layer so we can revert back to it in case of issues.
+
+```{r}
+#| eval: false
+#| code-summary: "Clean slivers"
+
+# Calculate areas in the new projection
+gk_data <- map(gk_data,
+               ~mutate(.x, area_m2_proj = unclass(st_area(.x))))
+
+# Identify polygons with area 0
+gk_data_0 <- map(gk_data,
+                 ~filter(.x, area_m2_proj =< 0.05)) # Random checks with QGIS
+names(gk_data_0) <- str_extract(gdb_files, "(?<=format/).{2}")
+
+# Clean them all after random checkes with QGIS
+gk_data <- map(gk_data,
+             ~filter(.x, area_m2_proj > 0.05)) 
+
+# Export gk_data without sliver
+gpkg_path_sliver <- paste0(str_remove(tempdir(), "Rtmp\\w*"), "GK_raw/GK_proj_sliverscleaned_layer.gpkg")
+
+iwalk(gk_data, function(layer, name) {
+        st_write(obj = layer,
+                 dsn = gpkg_path_sliver,
+                 layer = name,   
+                 append = FALSE,    
+                 delete_layer = TRUE)})
+
+
+# Clean R environment
+rm(list=setdiff(ls(), c("pull",
+                        "gpkg_path",
+                        "gpkg_path_proj",
+                        "gpkg_path_sliver")))
+
+```
+
+
+Then we fix the geometry errors. We run `st_make_valid` and if it fails, we revert to `st_buffer(geometry, dist = 0)` which sometimes fixes the issues. As we expect that some empty geometries and geometrical issues will remain, we don't overwrite `gk_data` so we can further investigate if necessary. We will clean the R environment after the geometrical cleaning.
+```{r}
+#| eval: false
+#| code-summary: "Fix geometry errors"
+
+gk_data_valid <- gk_data %>%
+                 imap(function(layer, name) {
+                      tryCatch({
+                        st_make_valid(layer)
+                      }, error = function(e) {
+                        message("st_make_valid() failed for layer '", name, "': ", conditionMessage(e),
+                                "\nFalling back to st_buffer(dist = 0)")
+                        st_buffer(layer, dist = 0)
+                      })
+                    })
+
+# Export the dataset
+gpkg_path_valid <- paste0(str_remove(tempdir(), "Rtmp\\w*"), "GK_raw/GK_proj_sliverscln_stvalid_layer.gpkg")
+
+iwalk(gk_data_valid, function(layer, name) {
+        st_write(obj = layer,
+                 dsn = gpkg_path_valid,
+                 layer = name,   
+                 append = FALSE,    
+                 delete_layer = TRUE)})
+
+# Clean R environment
+rm(list=setdiff(ls(), c("pull",
+                        "gpkg_path",
+                        "gpkg_path_proj",
+                        "gpkg_path_sliver",
+                        "gpkg_path_valid")))
+
+```
+
+
+Then we do some checks to see if the corrections were efficient.
+```{r}
+#| eval: false
+#| code-summary: "Check pre-cleaning worked"
+
+valid_check <- lapply(gk_data_valid,
+                      function(i){which(st_is_valid(i) == FALSE)})
+
+empty_check <- lapply(gk_data_valid,
+                      function(i){which(st_is_empty(i) == TRUE)})
+
+lapply(valid_check, function (i){length(i)})
+lapply(empty_check, function (i){length(i)})
+
+
+```
+
+#I STOPPED HERE###################
+
+Making the polygons valid resulted in a lot of polygons with empty geometry. Also, some polygons were still invalid. We are now looking at these to see how we can further clean them. We start by investigating the empty geometries. There is only one polygon with an empty geometry. Looking at the area, it is a polygon with 20,156.6 m2. It cannot be deleted as it is not a sliver. We will try to retrieve its geometry using the adjacent polygons that we can identify based on the original dataset and the `id` column. (retrieve geometry of a polygon in a wall to wall map based on adjacent polygons R).
+
+how to make polygons valid after already running st_make_valid or st_buffer(sf, 0)
+
+```{r}
+#| eval: false
+#| code-summary: "Investigate polygons with empty geometry"
+
+# Tile 18
+empty_18 <- gk_data_valid$`18`[empty_check$`18`, ]
+
+# Polygon whose geometry is missing
+gk_data_valid$`18` <- filter(gk_data_valid$`18`, areal_m2 == 0) 
+
+
+
+```
+
+
+
+
+BALINT ADDITIONAL CLEANING STEPS. I didn't do any union before as I thought you might need all the small polygons?
+
+
+Now we dissolve the ecosystem types into single polygons for further analyses. This should enable us to save some computing time.
+```{r}
+#| eval: false
+#| code-summary: "Dissolve ecosystem types into one single polygon"
+
+
+
+```
 
 
 ## 6. Export file
-Virtual raster already exported in the previous code.
 
 ```{r export}
 #| eval: false
+#| gk_data <- gdb_files %>% 
+                 map(\(.) read_gdb(., projection_crs = gk_crs)) %>% 
+                 compact() %>%  
+                 bind_rows()
 ```
 
 ## 7. References
