@@ -210,22 +210,25 @@ gk_rw_data <- gdb_files %>%
 # Name the layers
 names(gk_rw_data) <- str_extract(gdb_files, "(?<=format/).{2}")
 
-# Save an RDS copy on scratch
-# Path to the result geopackage
-gpkg_path <- paste0(str_remove(tempdir(), "Rtmp\\w*"), "GK_raw/GK_raw_layer.gpkg")
+# Export intermediate mayer (if needed)
+# gpkg_path <- paste0(str_remove(tempdir(), "Rtmp\\w*"), "GK_raw/GK_raw_layer.gpkg")
+# 
+# iwalk(gk_rw_data, function(layer, name) {
+#         st_write(obj = layer,
+#                  dsn = gpkg_path,
+#                  layer = name,   
+#                  append = FALSE,    
+#                  delete_layer = TRUE)})
 
-iwalk(gk_rw_data, function(layer, name) {
-        st_write(obj = layer,
-                 dsn = gpkg_path,
-                 layer = name,   
-                 append = FALSE,    
-                 delete_layer = TRUE)})
+# Read intermediate layer (if needed)
+# gk_rw_data <- st_read(gpkg_path)
 
 
 # Clean R environment
 rm(list=setdiff(ls(), c("pull",
                         "gpkg_path",
-                        "gdb_files")))
+                        "gdb_files",
+                        "gk_rw_data")))
 
 ```
 
@@ -239,10 +242,6 @@ First we need to re-project the tiles that are not in EPSG:25832. This CRS was c
 ```{r}
 #| eval: false
 #| code-summary: "Re-projection to EPSG:25832"
-
-# Read RDS file with raw data
-gk_rw_data <- st_read(gpkg_path)
-
 
 # Define CRS of the first layer (most common CRS of the gdb files)
 gk_crs <- st_crs(gk_rw_data [[1]])
@@ -262,25 +261,26 @@ gk_data <- map(gk_rw_data,
 # Path to the result geopackage
 gpkg_path_proj <- paste0(str_remove(tempdir(), "Rtmp\\w*"), "GK_raw/GK_projected_layer.gpkg")
 
-# Save as gpkg
-iwalk(gk_data, function(layer, name) {
-        st_write(obj = layer,
-                 dsn = gpkg_path_proj,
-                 layer = name,   
-                 append = FALSE,    
-                 delete_layer = TRUE)})
+# Export intermediate layer (if needed)
+# iwalk(gk_data, function(layer, name) {
+#         st_write(obj = layer,
+#                  dsn = gpkg_path_proj,
+#                  layer = name,   
+#                  append = FALSE,    
+#                  delete_layer = TRUE)})
 
-# Read if dataset already available
-layer_names <- st_layers(gpkg_path_proj)$name
-gk_data <- map(layer_names, ~st_read(gpkg_path_proj, layer = .x, quiet = TRUE))
-names(gk_data) <- str_extract(gdb_files, "(?<=format/).{2}")
+# Read intermediate layer (if needed)
+# layer_names <- st_layers(gpkg_path_proj)$name
+# gk_data <- map(layer_names, ~st_read(gpkg_path_proj, layer = .x, quiet = TRUE))
+# names(gk_data) <- str_extract(gdb_files, "(?<=format/).{2}")
 
 
 # Clean R environment
 rm(list=setdiff(ls(), c("pull",
                         "gdb_files",
                         "gpkg_path",
-                        "gpkg_path_proj")))
+                        "gpkg_path_proj",
+                        "gk_data")))
 
 ```
 
@@ -304,21 +304,27 @@ gk_data <- map(gk_data,
              ~filter(.x, area_m2_proj > 0.05)) 
 
 # Export gk_data without sliver
-gpkg_path_sliver <- paste0(str_remove(tempdir(), "Rtmp\\w*"), "GK_raw/GK_proj_sliverscleaned_layer.gpkg")
+# gpkg_path_sliver <- paste0(str_remove(tempdir(), "Rtmp\\w*"), "GK_raw/GK_proj_sliverscleaned_layer.gpkg")
+# 
+# iwalk(gk_data, function(layer, name) {
+#         st_write(obj = layer,
+#                  dsn = gpkg_path_sliver,
+#                  layer = name,   
+#                  append = FALSE,    
+#                  delete_layer = TRUE)})
 
-iwalk(gk_data, function(layer, name) {
-        st_write(obj = layer,
-                 dsn = gpkg_path_sliver,
-                 layer = name,   
-                 append = FALSE,    
-                 delete_layer = TRUE)})
+# Read intermediate layer (if needed)
+# layer_names <- st_layers(gpkg_path_sliver)$name
+# gk_data <- map(layer_names, ~st_read(gpkg_path_proj, layer = .x, quiet = TRUE))
+# names(gk_data) <- str_extract(gdb_files, "(?<=format/).{2}")
 
 
 # Clean R environment
 rm(list=setdiff(ls(), c("pull",
                         "gpkg_path",
                         "gpkg_path_proj",
-                        "gpkg_path_sliver")))
+                        "gpkg_path_sliver",
+                        "gk_data")))
 
 ```
 
@@ -328,6 +334,7 @@ Then we fix the geometry errors. We run `st_make_valid` and if it fails, we reve
 #| eval: false
 #| code-summary: "Fix geometry errors"
 
+# Fix geometry
 gk_data_valid <- gk_data %>%
                  imap(function(layer, name) {
                       tryCatch({
@@ -339,22 +346,30 @@ gk_data_valid <- gk_data %>%
                       })
                     })
 
-# Export the dataset
-gpkg_path_valid <- paste0(str_remove(tempdir(), "Rtmp\\w*"), "GK_raw/GK_proj_sliverscln_stvalid_layer.gpkg")
+# Export intermediate layer (if needed)
+# gpkg_path_valid <- paste0(str_remove(tempdir(), "Rtmp\\w*"), "GK_raw/GK_proj_sliverscln_stvalid_layer.gpkg")
+# 
+# iwalk(gk_data_valid, function(layer, name) {
+#         st_write(obj = layer,
+#                  dsn = gpkg_path_valid,
+#                  layer = name,   
+#                  append = FALSE,    
+#                  delete_layer = TRUE)})
 
-iwalk(gk_data_valid, function(layer, name) {
-        st_write(obj = layer,
-                 dsn = gpkg_path_valid,
-                 layer = name,   
-                 append = FALSE,    
-                 delete_layer = TRUE)})
+
+# Read intermediate layer (if needed)
+# layer_names <- st_layers(gpkg_path_valid)$name
+# gk_data_valid <- map(layer_names, ~st_read(gpkg_path_valid, layer = .x, quiet = TRUE))
+# names(gk_data_valid) <- str_extract(gdb_files, "(?<=format/).{2}")
 
 # Clean R environment
 rm(list=setdiff(ls(), c("pull",
                         "gpkg_path",
                         "gpkg_path_proj",
                         "gpkg_path_sliver",
-                        "gpkg_path_valid")))
+                        "gpkg_path_valid",
+                        "gk_data_valid",
+                        "gk_data_valid")))
 
 ```
 
@@ -376,22 +391,122 @@ lapply(empty_check, function (i){length(i)})
 
 ```
 
-#I STOPPED HERE###################
-
-Making the polygons valid resulted in a lot of polygons with empty geometry. Also, some polygons were still invalid. We are now looking at these to see how we can further clean them. We start by investigating the empty geometries. There is only one polygon with an empty geometry. Looking at the area, it is a polygon with 20,156.6 m2. It cannot be deleted as it is not a sliver. We will try to retrieve its geometry using the adjacent polygons that we can identify based on the original dataset and the `id` column. (retrieve geometry of a polygon in a wall to wall map based on adjacent polygons R).
-
-how to make polygons valid after already running st_make_valid or st_buffer(sf, 0)
+Running `st_make_valid()` did not solve all of the issues. We still have 15 polygons with invalid geometries, and one polygon in tile 18 has an empty geometry despite an area of 20,156m2 prior to the cleaning step. We will first investigate the geometrical issues that could not be fixed. For that we directly ask what the problem is with `st_make_valid()`.
 
 ```{r}
 #| eval: false
-#| code-summary: "Investigate polygons with empty geometry"
+#| code-summary: "Investigate polygons with remaining geometrical issues"
 
-# Tile 18
+# Polygons with unsolved geometrical issues
+idx <- which(sapply(valid_check, length) > 0)
+
+geom_issues <- map(idx, ~ gk_data_valid[[.x]][valid_check[[.x]], ])
+
+
+# Reasons for not being valid
+reasons <- geom_issues %>%
+              map(.,
+                  ~st_is_valid(.x, reason = TRUE))
+```
+
+The reason for the remaining invalidity is the self-intersection. We re-ran the function `st_make_valid()` and it fixed all the remaining geometrical issues. It is not clear as to why they were not fixed the first time around. We then replace these fixed geometry in the dataset.
+
+```{r}
+#| eval: false
+#| code-summary: "Fixing self-intersections"
+
+# Fix
+geom_issues_fixed <- map(geom_issues,
+                        ~st_make_valid(.x))
+
+# Check the fixing worked
+geom_issues_check <- map(geom_issues_fixed,
+                          ~st_is_valid(.x))
+
+# Replace fixed polygons in the original dataset
+gk_data_valid_fixed <- imap(gk_data_valid, function(x, nm) {
+  
+  if (!nm %in% names(geom_issues_fixed)){ # don't touch if not in geom_issues_fixed
+    return(x)
+    
+    }else{  
+  
+      st_geometry(x)[valid_check[[nm]]] <- st_geometry(geom_issues_fixed[[nm]])
+
+      return(x)
+      
+}
+  }
+)
+
+```
+
+Now we can take care of the empty geometry. There is only one polygon with an empty geometry. Given its area, it cannot be deleted as it is not a sliver. We tried to re-run `st_make_valid()` but with the argument `geos_method = "valid_linework"` and the geometry was corrected. By default, `st_make_valid()` sets the argument `geos_method = "valid_structure"`. `geos_method = "linework"` which is a more aggressive clean-up that goes back to lines of the polygons and creates new nodes. But to do so, we had to correct the geometry of the polygon from the dataset `gk_data` where only the slivers had been cleaned. This is because `gk_data_valid`, on which `st_make_valid()` had been run already, returned an empty geometry. We need a greometry to run `st_make_valid` a second tine. It worked. We then just replaced the geometry of the polygon in the dataset.
+
+```{r}
+#| eval: false
+#| code-summary: "Investigate and correct polygon with empty geometry"
+
+# Polygon with empty geometry
 empty_18 <- gk_data_valid$`18`[empty_check$`18`, ]
 
-# Polygon whose geometry is missing
-gk_data_valid$`18` <- filter(gk_data_valid$`18`, areal_m2 == 0) 
+# Read tile 18 of geopackage GK_proj_sliverscleaned_layer
+gk_data <- st_read(gpkg_path_sliver, layer = "18", quiet = TRUE)
+names(gk_data_valid) <- "18"
 
+# Repair the polygon with geos_method = "valid_structure"
+empty_18_fixed <- st_make_valid(gk_data[empty_check$`18`,],
+                                geos_method = "valid_linework")
+
+# Replace fixed polygons in the original dataset
+st_geometry(gk_data_valid_fixed$`18`)[empty_check$`18`] <- st_geometry(empty_18_fixed)
+
+```
+
+Now we can re-calculate all the areas based on the new valid geometries.
+
+```{r}
+#| eval: false
+#| code-summary: "Re-calculate areas"
+
+# Re-calculate areas
+gk_data_valid_fixed <- map(gk_data_valid_fixed,
+                           function(x){
+                             
+                             mutate(x, area_m2_final= unclass(st_area(x))) %>%
+                             select(., !c(area_m2_proj, areal_m2))
+                             }
+                           ) 
+
+# Export intermediate layer (if needed)
+# gk_path_valid_fixed <- paste0(str_remove(tempdir(), "Rtmp\\w*"), "GK_raw/GK_valid_final.gpkg")
+# 
+# iwalk(gk_path_valid_fixed, function(layer, name) {
+#         st_write(obj = layer,
+#                  dsn = gpkg_path_valid,
+#                  layer = name,   
+#                  append = FALSE,    
+#                  delete_layer = TRUE)})
+
+
+# Read intermediate layer (if needed)
+# gk_path_valid_fixed <- paste0(str_remove(tempdir(), "Rtmp\\w*"), "GK_raw/GK_valid_final.gpkg")
+# 
+# layer_names <- st_layers(gk_path_valid_fixed)$name
+# 
+# gk_data_valid_fixed <- map(layer_names, ~st_read(gk_path_valid_fixed, layer = .x, quiet = TRUE))
+# 
+# names(gk_data_valid_fixed) <- str_extract(gdb_files, "(?<=format/).{2}")
+
+
+# Clean R environment
+rm(list=setdiff(ls(), c("pull",
+                        "gpkg_path",
+                        "gpkg_path_proj",
+                        "gpkg_path_sliver",
+                        "gpkg_path_valid",
+                        "gk_path_valid_fixed",
+                        "gk_data_valid_fixed")))
 
 
 ```
@@ -399,27 +514,90 @@ gk_data_valid$`18` <- filter(gk_data_valid$`18`, areal_m2 == 0)
 
 
 
-BALINT ADDITIONAL CLEANING STEPS. I didn't do any union before as I thought you might need all the small polygons?
+# BALINT ADDITIONAL CLEANING STEPS. 
+I didn't do any union before as I thought you might need all the small polygons? I also left it as a list where each item is a tile. 
 
 
-Now we dissolve the ecosystem types into single polygons for further analyses. This should enable us to save some computing time.
+Now we merge all the tiles together, check for validity (making sure that all the tiles fit together nicely) and dissolve the ecosystem types into single polygons for further analyses. This should enable us to save some computing time. 
 ```{r}
 #| eval: false
 #| code-summary: "Dissolve ecosystem types into one single polygon"
 
+# Merge ET level one per tiles 
+gk_data_final <- gk_data_valid_fixed %>% 
+                    map(., function(x){
+                      x %>%
+                        group_by(okosystemtype_1) %>%
+                       summarise(geom = st_union(geom),
+                                 area_m2_total = sum(area_m2_final), 
+                                 .groups = "drop")
+                    }) 
+
+
+# Save intermediate product (if needed)
+# gk_path_data_join <- paste0(str_remove(tempdir(), "Rtmp\\w*"), "GK_raw/GK_ETlevel1_union_tiles_21JULY2026.gpkg")
+# 
+# iwalk(gk_path_data_join, function(layer, name) {
+#         st_write(obj = layer,
+#                  dsn = gk_path_data,
+#                  layer = name,   
+#                  append = FALSE,    
+#                  delete_layer = TRUE)})
+
+# Read intermediate layer (if needed)
+# gk_path_data_join <- paste0(str_remove(tempdir(), "Rtmp\\w*"), "GK_raw/GK_ETlevel1_union_tiles_21JULY2026.gpkg")
+# 
+# layer_names <- st_layers(gk_path_data_join)$name
+# 
+# gk_data_final <- map(layer_names, ~st_read(gk_path_data_join, layer = .x, quiet = TRUE))
+# 
+# names(gk_data_final) <- str_extract(gdb_files, "(?<=format/).{2}")
+
+# Merge all tiles together and union ET level 1 at national level
+gk_data_final <- gk_data_final %>% # overwrite data to spare memory
+                   compact() %>%  
+                   bind_rows() %>%
+                   group_by(okosystemtype_1) %>%
+                   summarise(geom = st_union(geom),
+                             area_m2_total = sum(area_m2_final), 
+                             area_m2_st = unclass(st_area(.)),
+                             .groups = "drop")
+
+# Check validity
+final_validity <- which(st_is_valid(gk_data_final) == FALSE)
+
+# Export
+gk_path_data_final <- paste0(str_remove(tempdir(), "Rtmp\\w*"), "GK_raw/GK_final_19JULY2026.gpkg")
+
+st_write(gk_data_final, gk_path_data_final, layer = "ET level 1")
+
+
+st_write(filter(gk_data_final, okosystemtype_1 == ""), 
+         gk_data_final, 
+         layer = "my_layer_name")
+
+st_write(my_sf_object, gk_data_final, layer = "my_layer_name", append = TRUE)
+
+# Clean R Environment
+rm(list=setdiff(ls(), c("pull",
+                        "gpkg_path",
+                        "gpkg_path_proj",
+                        "gpkg_path_sliver",
+                        "gpkg_path_valid",
+                        "gk_path_valid_fixed",
+                        "gk_data_final")))
 
 
 ```
 
 
 ## 6. Export file
-
+We export the data as a geopackage where each layer is an ecosystem type.
 ```{r export}
 #| eval: false
-#| gk_data <- gdb_files %>% 
-                 map(\(.) read_gdb(., projection_crs = gk_crs)) %>% 
-                 compact() %>%  
-                 bind_rows()
+
+
+
 ```
 
 ## 7. References
