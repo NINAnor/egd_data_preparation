@@ -518,7 +518,7 @@ rm(list=setdiff(ls(), c("pull",
 I didn't do any union before as I thought you might need all the small polygons? I also left it as a list where each item is a tile. 
 
 
-Now we merge all the tiles together, check for validity (making sure that all the tiles fit together nicely) and dissolve the ecosystem types into single polygons for further analyses. This should enable us to save some computing time. 
+Now we merge all ecosystems at level one in each tile, before merging the tiles together and run another union across ecosystems at level 1. *Note: we have to split this last formatting step in two because the process is too intensive. Running a union per tile already takes 12h.*
 ```{r}
 #| eval: false
 #| code-summary: "Dissolve ecosystem types into one single polygon"
@@ -559,9 +559,18 @@ gk_data_final <- gk_data_final %>% # overwrite data to spare memory
                    bind_rows() %>%
                    group_by(okosystemtype_1) %>%
                    summarise(geom = st_union(geom),
-                             area_m2_total = sum(area_m2_final), 
+                             area_m2_total = sum(area_m2_total), 
                              area_m2_st = unclass(st_area(.)),
                              .groups = "drop")
+
+gk_data_final_nat <- gk_data_final %>% # overwrite data to spare memory
+    compact() %>%  
+    bind_rows() %>%
+    group_by(okosystemtype_1) %>%
+    summarise(geom = st_union(geom),
+              area_m2_total = sum(area_m2_total), 
+              area_m2_st = unclass(st_area(.)),
+              .groups = "drop")
 
 # Check validity
 final_validity <- which(st_is_valid(gk_data_final) == FALSE)
