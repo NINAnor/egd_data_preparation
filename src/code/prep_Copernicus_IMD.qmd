@@ -7,7 +7,7 @@ country: Norway
 continent: Europe
 yearAdded: 2026 # the year when the indicator was first submitted to ecRxiv
 yearLastUpdate: 2026
-status: incomplete # options are complete, incomplete, or deprecated
+status: complete # options are complete, incomplete, or deprecated
 Version: "0.1.0" # See wiki page: https://github.com/NINAnor/ecRxiv/wiki#versioning
 VersionComment: 'First version. The code has been adapted from https://github.com/NINAnor/ecRxiv/tree/main/indicators/NO_URGR_001-005. Template adapated from Anders Kolstad ecRxiv repository: https://github.com/NINAnor/ecRxiv.'
 url: https://github.com/NINAnor/egd_data_preparation
