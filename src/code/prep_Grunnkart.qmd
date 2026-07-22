@@ -238,13 +238,13 @@ Now that we the raw data, we can move on to the cleaning and formatting step.
 ## 5. Data cleaning and formatting
 *Note: most of the code could not be run in parallel due to the size of the data. `in_parallel()` copies the data to each deamon used, while `future_map()` is not advised when the data are too big as moving them to the GlobalEnv once the operation is finished will take a lot of time, ruining the time you gain by running the operations in parallel.*
 
-First we need to re-project the tiles that are not in EPSG:25832. This CRS was chosen as it is the one most tiles had. We re-project but still keep the tiles separated. We also write a geopackage as well to keep these data to solve issues if any occur during the cleaning process.
+First we need to re-project the tiles that are not in EPSG:25833. This CRS was chosen as it is the one most tiles had. We re-project but still keep the tiles separated. We also write a geopackage as well to keep these data to solve issues if any occur during the cleaning process.
 ```{r}
 #| eval: false
-#| code-summary: "Re-projection to EPSG:25832"
+#| code-summary: "Re-projection to EPSG:25833"
 
 # Define CRS of the first layer (most common CRS of the gdb files)
-gk_crs <- st_crs(gk_rw_data [[1]])
+gk_crs <- st_crs(gk_rw_data[[1]])
 
 
 # Re-project if needed
@@ -518,7 +518,7 @@ rm(list=setdiff(ls(), c("pull",
 I didn't do any union before as I thought you might need all the small polygons? I also left it as a list where each item is a tile. 
 
 
-Now we merge all ecosystems at level one in each tile, before merging the tiles together and run another union across ecosystems at level 1. *Note: we have to split this last formatting step in two because the process is too intensive. Running a union per tile already takes 12h.*
+Now we merge all ecosystems at level one in each tile, before merging the tiles together and run another union across ecosystems at level 1. *Note: we have to split this last formatting step in two because the process is too intensive. Running a union per tile already takes 12h. Merging all tiles and running a union also takes about 24h.*
 ```{r}
 #| eval: false
 #| code-summary: "Dissolve ecosystem types into one single polygon"
@@ -537,9 +537,9 @@ gk_data_final <- gk_data_valid_fixed %>%
 # Save intermediate product (if needed)
 # gk_path_data_join <- paste0(str_remove(tempdir(), "Rtmp\\w*"), "GK_raw/GK_ETlevel1_union_tiles_21JULY2026.gpkg")
 # 
-# iwalk(gk_path_data_join, function(layer, name) {
+# iwalk(gk_data_final, function(layer, name) {
 #         st_write(obj = layer,
-#                  dsn = gk_path_data,
+#                  dsn = gk_path_data_join,
 #                  layer = name,   
 #                  append = FALSE,    
 #                  delete_layer = TRUE)})
@@ -572,8 +572,9 @@ gk_data_final_nat <- gk_data_final %>% # overwrite data to spare memory
               area_m2_st = unclass(st_area(.)),
               .groups = "drop")
 
-# Check validity
+# Check validity and CRS
 final_validity <- which(st_is_valid(gk_data_final) == FALSE)
+crs(gk_data_final[[1]])
 
 # Export
 gk_path_data_final <- paste0(str_remove(tempdir(), "Rtmp\\w*"), "GK_raw/GK_final_19JULY2026.gpkg")
