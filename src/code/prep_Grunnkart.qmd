@@ -240,279 +240,116 @@ Now that we the raw data are written in the DuckDB database we established, we c
 ## 5. Data cleaning and formatting
 *Note: DuckDB automatically paralellise code within the cores and memory limits we set.*
 
-First we need to re-project the tiles that are not in EPSG:25832. This CRS was chosen as it is the one most tiles had. We re-project but still keep the tiles separated. We also write a geopackage as well to keep these data to solve issues if any occur during the cleaning process.
-```{r}
-#| eval: false
-#| code-summary: "Re-projection to EPSG:25832"
-
-# Define CRS of the first layer (most common CRS of the gdb files)
-gk_crs <- st_crs(gk_rw_data[[1]])
-
-
-# Re-project if needed
-gk_data <- map(gk_rw_data, 
-               function(i){
-  
-  if(st_crs(i) != gk_crs){
-  st_transform(i, crs = gk_crs)
-    
-}else{
-  i
-}})
-
-# Path to the result geopackage
-gpkg_path_proj <- paste0(str_remove(tempdir(), "Rtmp\\w*"), "GK_raw/GK_projected_layer.gpkg")
-
-# Export intermediate layer (if needed)
-# iwalk(gk_data, function(layer, name) {
-#         st_write(obj = layer,
-#                  dsn = gpkg_path_proj,
-#                  layer = name,   
-#                  append = FALSE,    
-#                  delete_layer = TRUE)})
-
-# Read intermediate layer (if needed)
-# layer_names <- st_layers(gpkg_path_proj)$name
-# gk_data <- map(layer_names, ~st_read(gpkg_path_proj, layer = .x, quiet = TRUE))
-# names(gk_data) <- str_extract(gdb_files, "(?<=format/).{2}")
-
-
-# Clean R environment
-rm(list=setdiff(ls(), c("pull",
-                        "gdb_files",
-                        "gpkg_path",
-                        "gpkg_path_proj",
-                        "gk_data")))
-
-```
-
-We then re-calculate the area of the polygons. If the newly calculated area under 0.05 m2, we compare it with the area from the original dataset. We chose the threshold arbitrarily as the Grunnkart doesn't have any MMU. We isolate these polygons and check if they are slivers by randomly inspecting some in QGIS. If they are slivers, we delete them. This needs to be done prior to fixing any geometrical issue as they can cause `st_make_valid()` to fail, split into multi-geometries, or generate anomalous dimensions. We export this intermediate layer so we can revert back to it in case of issues.
-
+First we clean the slivers before re-projecting. We set polygons with an area less than 0.05m2 as slivers.
 ```{r}
 #| eval: false
 #| code-summary: "Clean slivers"
 
-# Calculate areas in the new projection
-gk_data <- map(gk_data,
-               ~mutate(.x, area_m2_proj = unclass(st_area(.x))))
-
-# Identify polygons with area 0
-gk_data_0 <- map(gk_data,
-                 ~filter(.x, area_m2_proj =< 0.05)) # Random checks with QGIS
-names(gk_data_0) <- str_extract(gdb_files, "(?<=format/).{2}")
-
-# Clean them all after random checkes with QGIS
-gk_data <- map(gk_data,
-             ~filter(.x, area_m2_proj > 0.05)) 
-
-# Export gk_data without sliver
-# gpkg_path_sliver <- paste0(str_remove(tempdir(), "Rtmp\\w*"), "GK_raw/GK_proj_sliverscleaned_layer.gpkg")
-# 
-# iwalk(gk_data, function(layer, name) {
-#         st_write(obj = layer,
-#                  dsn = gpkg_path_sliver,
-#                  layer = name,   
-#                  append = FALSE,    
-#                  delete_layer = TRUE)})
-
-# Read intermediate layer (if needed)
-# layer_names <- st_layers(gpkg_path_sliver)$name
-# gk_data <- map(layer_names, ~st_read(gpkg_path_proj, layer = .x, quiet = TRUE))
-# names(gk_data) <- str_extract(gdb_files, "(?<=format/).{2}")
+# recalculate areas and remove slivers
+db_gk_sliver_cln <- ddbs_area("grunnkart_raw", new_column = "area_m2_proj", conn = conn_gk, overwrite = TRUE) %>%
+                      filter(area_m2_proj > 0.05) 
 
 
-# Clean R environment
-rm(list=setdiff(ls(), c("pull",
-                        "gpkg_path",
-                        "gpkg_path_proj",
-                        "gpkg_path_sliver",
-                        "gk_data")))
+# # Checks (if needed)
+# gk <- ddbs_read_table(conn_gk, "grunnkart_raw")
+# unique(gk$tile_name)
+# gk_sliver_cln <- ddbs_collect(db_gk_sliver_cln, as = "sf")
+# st_crs(gk_sliver_cln)
+# nrow(gk) - nrow(gk_sliver_cln)
+
+# Clean checks R Environment
+rm(ddbs_read_and_transform_gk,
+   gk,
+   gk_sliver_cln)
+
+```
+
+Now we can fix geometry. 
+
+```{r}
+#| eval: false
+#| code-summary: "Fix geometry issues"
+
+# Fix issues and write the table in the database
+ddbs_make_valid("grunnkart_raw",
+                conn = conn_gk,
+                "grunnkart_valid", # checkpoint - create a data table in duckdb database
+                overwrite = TRUE)
+
+# Verify table is in my duckdb conn_gk database
+ddbs_list_tables(conn_gk)
+
+# Checks 
+valid_check <- ddbs_is_valid("grunnkart_valid",
+                             conn = conn_gk) %>%
+  filter(!is_valid) # same as is_valid == FALSE
+
+
+empty_check <- ddbs_is_empty("grunnkart_valid",
+                             conn = conn_gk) %>%
+                  filter(is_empty == TRUE)
+
+simple_check <- ddbs_is_simple("grunnkart_valid",
+                               conn = conn_gk) %>%
+                  filter(!is_simple)  # same as is_simple == FALSE
+
+
+
+gk_valid_ck <- ddbs_collect(valid_check, as = "sf")
+gk_empty_ck <- ddbs_collect(empty_check, as = "sf")
+gk_simple_ck <- ddbs_collect(simple_check, as = "sf")
+
+# Re-calculate areas
+gk_valid <- ddbs_area("grunnkart_valid", new_column = "area_m2_valid", conn = conn_gk, overwrite = TRUE) %>%
+                      select(tile_name, komid, okosystemtype_1, area_m2_valid, geo)
+
+# Clean checks R Environment
+rm(valid_check,
+   empty_check,
+   simple_check,
+   gk_valid_ck,
+   gk_empty_ck,
+   gk_simple_ck)
+
 
 ```
 
 
-Then we fix the geometry errors. We run `st_make_valid` and if it fails, we revert to `st_buffer(geometry, dist = 0)` which sometimes fixes the issues. As we expect that some empty geometries and geometrical issues will remain, we don't overwrite `gk_data` so we can further investigate if necessary. We will clean the R environment after the geometrical cleaning.
+Now we can export this intermediate product, to have one data saved in case the union crashes later. We also clean the duckdb database.
 ```{r}
 #| eval: false
 #| code-summary: "Fix geometry errors"
 
-# Fix geometry
-gk_data_valid <- gk_data %>%
-                 imap(function(layer, name) {
-                      tryCatch({
-                        st_make_valid(layer)
-                      }, error = function(e) {
-                        message("st_make_valid() failed for layer '", name, "': ", conditionMessage(e),
-                                "\nFalling back to st_buffer(dist = 0)")
-                        st_buffer(layer, dist = 0)
-                      })
-                    })
+# Export the intermediate product
+ddbs_write_dataset(gk_valid,
+                   path = paste0(str_remove(tempdir(), "Rtmp\\w*"), "GK_raw/GK_valid_db_30JULY2026.gpkg"),
+                   gdal_driver = "GPKG",
+                   conn = conn_gk,
+                   crs = "EPSG:25832",
+                   overwrite = TRUE,
+                   layer = "gk_valid")
 
-# Export intermediate layer (if needed)
-# gpkg_path_valid <- paste0(str_remove(tempdir(), "Rtmp\\w*"), "GK_raw/GK_proj_sliverscln_stvalid_layer.gpkg")
-# 
-# iwalk(gk_data_valid, function(layer, name) {
-#         st_write(obj = layer,
-#                  dsn = gpkg_path_valid,
-#                  layer = name,   
-#                  append = FALSE,    
-#                  delete_layer = TRUE)})
-
-
-# Read intermediate layer (if needed)
-# layer_names <- st_layers(gpkg_path_valid)$name
-# gk_data_valid <- map(layer_names, ~st_read(gpkg_path_valid, layer = .x, quiet = TRUE))
-# names(gk_data_valid) <- str_extract(gdb_files, "(?<=format/).{2}")
-
-# Clean R environment
-rm(list=setdiff(ls(), c("pull",
-                        "gpkg_path",
-                        "gpkg_path_proj",
-                        "gpkg_path_sliver",
-                        "gpkg_path_valid",
-                        "gk_data_valid",
-                        "gk_data_valid")))
-
-```
-
-
-Then we do some checks to see if the corrections were efficient.
-```{r}
-#| eval: false
-#| code-summary: "Check pre-cleaning worked"
-
-valid_check <- lapply(gk_data_valid,
-                      function(i){which(st_is_valid(i) == FALSE)})
-
-empty_check <- lapply(gk_data_valid,
-                      function(i){which(st_is_empty(i) == TRUE)})
-
-lapply(valid_check, function (i){length(i)})
-lapply(empty_check, function (i){length(i)})
-
-
-```
-
-Running `st_make_valid()` did not solve all of the issues. We still have 15 polygons with invalid geometries, and one polygon in tile 18 has an empty geometry despite an area of 20,156m2 prior to the cleaning step. We will first investigate the geometrical issues that could not be fixed. For that we directly ask what the problem is with `st_make_valid()`.
-
-```{r}
-#| eval: false
-#| code-summary: "Investigate polygons with remaining geometrical issues"
-
-# Polygons with unsolved geometrical issues
-idx <- which(sapply(valid_check, length) > 0)
-
-geom_issues <- map(idx, ~ gk_data_valid[[.x]][valid_check[[.x]], ])
-
-
-# Reasons for not being valid
-reasons <- geom_issues %>%
-              map(.,
-                  ~st_is_valid(.x, reason = TRUE))
-```
-
-The reason for the remaining invalidity is the self-intersection. We re-ran the function `st_make_valid()` and it fixed all the remaining geometrical issues. It is not clear as to why they were not fixed the first time around. We then replace these fixed geometry in the dataset.
-
-```{r}
-#| eval: false
-#| code-summary: "Fixing self-intersections"
-
-# Fix
-geom_issues_fixed <- map(geom_issues,
-                        ~st_make_valid(.x))
-
-# Check the fixing worked
-geom_issues_check <- map(geom_issues_fixed,
-                          ~st_is_valid(.x))
-
-# Replace fixed polygons in the original dataset
-gk_data_valid_fixed <- imap(gk_data_valid, function(x, nm) {
+# Clean duckdb databse
+tables <- dbListTables(conn_gk)
+tbl_list <- tables[!tables %in% "grunnkart_valid"]
+            
+for (tbl in tbl_list) {
   
-  if (!nm %in% names(geom_issues_fixed)){ # don't touch if not in geom_issues_fixed
-    return(x)
+  if(substr(tbl, 1, 9) == "temp_view"){
     
-    }else{  
-  
-      st_geometry(x)[valid_check[[nm]]] <- st_geometry(geom_issues_fixed[[nm]])
-
-      return(x)
-      
-}
+    dbExecute(conn_gk, sprintf("DROP VIEW IF EXISTS %s", dbQuoteIdentifier(conn_gk, tbl)))
+    
+  }else{
+    
+    dbExecute(conn_gk, sprintf("DROP TABLE IF EXISTS %s", dbQuoteIdentifier(conn_gk, tbl)))
   }
-)
+  
+}
+
+# Verify grunnkart_valid remains
+ddbs_list_tables(conn_gk)
 
 ```
-
-Now we can take care of the empty geometry. There is only one polygon with an empty geometry. Given its area, it cannot be deleted as it is not a sliver. We tried to re-run `st_make_valid()` but with the argument `geos_method = "valid_linework"` and the geometry was corrected. By default, `st_make_valid()` sets the argument `geos_method = "valid_structure"`. `geos_method = "linework"` which is a more aggressive clean-up that goes back to lines of the polygons and creates new nodes. But to do so, we had to correct the geometry of the polygon from the dataset `gk_data` where only the slivers had been cleaned. This is because `gk_data_valid`, on which `st_make_valid()` had been run already, returned an empty geometry. We need a greometry to run `st_make_valid` a second tine. It worked. We then just replaced the geometry of the polygon in the dataset.
-
-```{r}
-#| eval: false
-#| code-summary: "Investigate and correct polygon with empty geometry"
-
-# Polygon with empty geometry
-empty_18 <- gk_data_valid$`18`[empty_check$`18`, ]
-
-# Read tile 18 of geopackage GK_proj_sliverscleaned_layer
-gk_data <- st_read(gpkg_path_sliver, layer = "18", quiet = TRUE)
-names(gk_data_valid) <- "18"
-
-# Repair the polygon with geos_method = "valid_structure"
-empty_18_fixed <- st_make_valid(gk_data[empty_check$`18`,],
-                                geos_method = "valid_linework")
-
-# Replace fixed polygons in the original dataset
-st_geometry(gk_data_valid_fixed$`18`)[empty_check$`18`] <- st_geometry(empty_18_fixed)
-
-```
-
-Now we can re-calculate all the areas based on the new valid geometries.
-
-```{r}
-#| eval: false
-#| code-summary: "Re-calculate areas"
-
-# Re-calculate areas
-gk_data_valid_fixed <- map(gk_data_valid_fixed,
-                           function(x){
-                             
-                             mutate(x, area_m2_final= unclass(st_area(x))) %>%
-                             select(., !c(area_m2_proj, areal_m2))
-                             }
-                           ) 
-
-# Export intermediate layer (if needed)
-# gk_path_valid_fixed <- paste0(str_remove(tempdir(), "Rtmp\\w*"), "GK_raw/GK_valid_final.gpkg")
-# 
-# iwalk(gk_path_valid_fixed, function(layer, name) {
-#         st_write(obj = layer,
-#                  dsn = gpkg_path_valid,
-#                  layer = name,   
-#                  append = FALSE,    
-#                  delete_layer = TRUE)})
-
-
-# Read intermediate layer (if needed)
-# gk_path_valid_fixed <- paste0(str_remove(tempdir(), "Rtmp\\w*"), "GK_raw/GK_valid_final.gpkg")
-# 
-# layer_names <- st_layers(gk_path_valid_fixed)$name
-# 
-# gk_data_valid_fixed <- map(layer_names, ~st_read(gk_path_valid_fixed, layer = .x, quiet = TRUE))
-# 
-# names(gk_data_valid_fixed) <- str_extract(gdb_files, "(?<=format/).{2}")
-
-
-# Clean R environment
-rm(list=setdiff(ls(), c("pull",
-                        "gpkg_path",
-                        "gpkg_path_proj",
-                        "gpkg_path_sliver",
-                        "gpkg_path_valid",
-                        "gk_path_valid_fixed",
-                        "gk_data_valid_fixed")))
-
-
-```
-
 
 
 
@@ -520,7 +357,7 @@ rm(list=setdiff(ls(), c("pull",
 I didn't do any union before as I thought you might need all the small polygons? I also left it as a list where each item is a tile. 
 
 ## 6. Data formatting
-Now we merge all ecosystems at level one in each tile, before merging the tiles together and run another union across ecosystems at level 1. *Note: we have to split this last formatting step in two because the process is too intensive. Running a union per tile already takes 12h. Merging all tiles and running a union also takes about 24h.*
+The goal is now to do a union of each ecosystem type across all the tiles (counties). To do that, we start by doing a union for each ecosystem type per tile. To avoid memory issues, we divide the tiles in three groups and perform the union on these three groups separately.
 ```{r}
 #| eval: false
 #| code-summary: "Dissolve ecosystem types into one single polygon"
