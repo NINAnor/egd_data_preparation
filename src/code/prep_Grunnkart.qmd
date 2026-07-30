@@ -186,59 +186,59 @@ Uncertainties related to this dataset were not quantified or reported by NIBIO.
 ## 4. Load the data
 The Grunnkart is a a big dataset and, for NINA, these data were only available upon request. This means that we could not read them using an API and they had to be downloaded and stored on NINA's internal servers directly. 
 
-From experience, there are many geometrical issues with the Grunnkart that need to be fixed. In order to do that properly, we need to ensure that a copy of all intermediate products remain somewhere, untouched, so we can go back to them if we need to for comparison. That is why the loading of the data is just about loading the orginial version of the data, without doing any pre-cleaning, including re-projection of the tiles that are not in EPSG:25832. This strategy though puts a strain on the memory, that is why we then save the raw data as a geopackage file that we can read in later on. It is necessary to keep the raw data as the transformations that will be required to clean the data may create empty geometries despite the geometry being present in the raw data. So it is important to keep the raw data to help correct these issues. 
+Prior testing revealed that `sf` package is less performant to correct geometrical issues than the more recent `duckspatial` package, which uses DuckDB. We run the first part of the code with `duckspatial` including loading the data and the cleaning of the geometries and slivers.
 
-*This step can be skipped if the .gpkg has already been created*.
+*Note: Most of the Grunnkart tiles are in EPSG:25832, two tiles are in EPSG:25833, one in EPSG:25835 and one in EPSG:4258. To reduce the number of operations, we choose to stay in EPSG:25832*
 
+*Note: `duckspatial` creates a duckdb database to store the data. This can become heavy very easily so the solution is to either make sure to have space on the disk, or clean the intermediate product along the way*
+
+The first step is to open a connection to DuckDB. We advise to do it on a temporary file that will be deleted later on. We limit the threads (i.e. cores) to 10 and the memory to 30GB.
 ```{r}
 #| eval: false
-#| code-summary: "Read the sf objects from gdb"
-# Code co-created by Sylvie Clappe and Jennifer Hansen
-
-# Call a function to read gdb files
-source(here::here("src", "functions", "read_gdb_files.R"))
-
-# Path to the Grunnkart  
-gdb_folder <- "/data/R/GeoSpatialData/LandUse/Norway_Arealregnskap/Original/GrunnkartArealregnskap FGDB-format"
-
-# List the gdb files
-gdb_files <- list.files(gdb_folder, pattern = "_gdb\\.gdb$", 
-                        full.names = TRUE)
-
-# Read data with gdb files
-gk_rw_data <- gdb_files %>% 
-                 map(\(.) read_gdb(.)) 
-
-# Name the layers
-names(gk_rw_data) <- str_extract(gdb_files, "(?<=format/).{2}")
-
-# Export intermediate mayer (if needed)
-# gpkg_path <- paste0(str_remove(tempdir(), "Rtmp\\w*"), "GK_raw/GK_raw_layer.gpkg")
-# 
-# iwalk(gk_rw_data, function(layer, name) {
-#         st_write(obj = layer,
-#                  dsn = gpkg_path,
-#                  layer = name,   
-#                  append = FALSE,    
-#                  delete_layer = TRUE)})
-
-# Read intermediate layer (if needed)
-# gk_rw_data <- st_read(gpkg_path)
-
-
-# Clean R environment
-rm(list=setdiff(ls(), c("pull",
-                        "gpkg_path",
-                        "gdb_files",
-                        "gk_rw_data")))
+#| code-summary: "Create a DuckDB connection"
+conn_gk <- ddbs_create_conn(dbdir = "tempdir", threads = 10, memory_limit_gb = 30)
 
 ```
 
-Now that we the raw data, we can move on to the cleaning and formatting step.
+Now we can read the data and write them on our temporary DuckDB database. We re-project on the fly to EPSG:25832 if necessary. This process takes a bit of time due to the size of the data (~10mins).
+```{r}
+#| eval: false
+#| code-summary: "Read the sf objects from gdb"
+
+# Write data in duckdb connection and re-project if necessary 
+# Path to data
+gdb_folder <- "/data/R/GeoSpatialData/LandUse/Norway_Arealregnskap/Original/GrunnkartArealregnskap FGDB-format"
+
+gdb_files <- list.files(gdb_folder, pattern = "_gdb\\.gdb$", 
+                        full.names = TRUE)
+
+
+# Main CRS - EPSG:25832
+gk_crs <- st_read(gdb_files[1], 
+                  query = "SELECT * FROM arealregnskap LIMIT 10") %>%
+  st_crs()
+
+# # Remove grunnkart_raw dataset if aleardy in my db connection
+# dbExecute(conn_gk, "DROP TABLE IF EXISTS grunnkart_raw")
+
+# Read
+source(here::here("src", "functions", "ddbs_read_and_transform_gk.R"))
+
+db_gk <- gdb_files %>%
+  walk( ~ddbs_read_and_transform_gk(data_path_gdb = .,
+                                    conn_name = conn_gk,
+                                    crs_proj = gk_crs))
+
+# Verify table is in my duckdb conn_gk database
+ddbs_list_tables(conn_gk)
+
+```
+
+Now that we the raw data are written in the DuckDB database we established, we can move on to the cleaning step.
 
 
 ## 5. Data cleaning and formatting
-*Note: most of the code could not be run in parallel due to the size of the data. `in_parallel()` copies the data to each deamon used, while `future_map()` is not advised when the data are too big as moving them to the GlobalEnv once the operation is finished will take a lot of time, ruining the time you gain by running the operations in parallel.*
+*Note: DuckDB automatically paralellise code within the cores and memory limits we set.*
 
 First we need to re-project the tiles that are not in EPSG:25832. This CRS was chosen as it is the one most tiles had. We re-project but still keep the tiles separated. We also write a geopackage as well to keep these data to solve issues if any occur during the cleaning process.
 ```{r}
@@ -519,7 +519,7 @@ rm(list=setdiff(ls(), c("pull",
 # BALINT ADDITIONAL CLEANING STEPS. 
 I didn't do any union before as I thought you might need all the small polygons? I also left it as a list where each item is a tile. 
 
-
+## 6. Data formatting
 Now we merge all ecosystems at level one in each tile, before merging the tiles together and run another union across ecosystems at level 1. *Note: we have to split this last formatting step in two because the process is too intensive. Running a union per tile already takes 12h. Merging all tiles and running a union also takes about 24h.*
 ```{r}
 #| eval: false
@@ -603,7 +603,7 @@ rm(list=setdiff(ls(), c("pull",
 ```
 
 
-## 6. Export file
+## 7. Export file
 We export the data as a geopackage where each layer is an ecosystem type.
 ```{r export}
 #| eval: false
@@ -612,14 +612,14 @@ We export the data as a geopackage where each layer is an ecosystem type.
 
 ```
 
-## 7. References
+## 8. References
 <!--# You can add references manually or use a citation manager and add intext citations as with crossreferencing and hyperlinks. See https://quarto.org/docs/authoring/footnotes-and-citations.html -->
 
 
 ::: {#refs}
 :::
 
-## 8. Author contributions
+## 9. Author contributions
 
 <!-- Fill in CReDIT and MeRIT statments to clarify the contributions from individual authors. For MeRIT, see https://www.nature.com/articles/s41467-023-37039-1. For CRedit, see https://credit.niso.org/. You can start with the template structur below, and just delete the rows you dont use.  -->
 
