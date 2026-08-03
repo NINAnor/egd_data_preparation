@@ -28,18 +28,33 @@ Path to metadata: https://kartkatalog.geonorge.no/metadata/friluftslivsomraader-
 
 ## Packages
 ```{r}
+library(knitr)
+library(tidyverse)
+library(kableExtra)
+library(here)
+library(yaml)
+library(tibble)
+library(conflicted)
+library(duckdb)
+library(duckspatial)
 library(sf)
+library(dplyr)
+library(stringr)
+library(terra)
+
 ```
 
 
 ## Functions
-XX functions have been created for the purposes of this code:
+Three functions have been created for the purposes of this code:
 
 - extract_zip_files.R: script creating virtual rasters.
 - list_zip_files.R: script extracting the raster files from .zip files.
+- ddbs_union_gk.R: does spatial union and clean geometries.
 
 ## Running the code
 Two scripts have been designed:
 
 - prep_Copernicus_IMD.qmd : script pre-processing Copernicus IMD for URGR condition indicators.
-- prep_Grunnkart.qmd: script pre-processing the grunnkart for URGR, URAQ and TCCD condition indicators.
+- prep_Grunnkart.qmd: script pre-processing the Grunnkart for URGR, URAQ and TCCD condition indicators.
+- prep_PM.qmd: script pre-processing PM2.5 data for URAQ indicators.
