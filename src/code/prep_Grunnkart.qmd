@@ -744,9 +744,19 @@ union_all <- tile_union_ddbs %>%
               select(!tile_name)
 
 # Export
-path_gpkg <- paste0(str_remove(tempdir(), "Rtmp\\w*"), "GK_raw/GK_final.gpkg")
-st_write(union_all,
-         path_gpkg)
+path_gpkg <- paste0(str_remove(tempdir(), "Rtmp\\w*"), "GK_raw/GK_final_UTM32.gpkg")
+et1 <- unique(union_all$okosystemtype_1) %>% sort()
+
+for (lyr in et1){
+  
+  et <- union_all %>%
+          filter(okosystemtype_1 == lyr)
+  
+  st_write(et,
+           path_gpkg,
+           layer = lyr,
+           append = TRUE)
+}
 
 
 # Clean duckdb databse
@@ -796,9 +806,19 @@ union_all <- union_all %>%
                 select(!tile_name)
 
 # Export
-path_gpkg <- paste0(str_remove(tempdir(), "Rtmp\\w*"), "GK_raw/GK_final.gpkg")
-st_write(union_all,
-         path_gpkg)
+path_gpkg <- paste0(str_remove(tempdir(), "Rtmp\\w*"), "GK_raw/GK_final_UTM32.gpkg")
+et1 <- unique(union_all$okosystemtype_1) %>% sort()
+
+for (lyr in et1){
+  
+  et <- union_all %>%
+          filter(okosystemtype_1 == lyr)
+  
+  st_write(et,
+           path_gpkg,
+           layer = lyr,
+           append = TRUE)
+}
 
 
 # Clean checks R Environment
@@ -857,10 +877,22 @@ simple_check <- ddbs_is_simple("grunnkart_33",
 
 # Export
 path_gpkg <- paste0(str_remove(tempdir(), "Rtmp\\w*"), "GK_raw/GK_final_UTM33.gpkg")
-as_duckspatial_df("grunnkart_33",
+union_all_33 <- as_duckspatial_df("grunnkart_33",
                    conn = conn_gk) %>%
-  select(!fid) %>%
-  ddbs_write_dataset(path = path_gpkg)
+                    select(!fid)
+
+et1 <- unique(union_all_33$okosystemtype_1) %>% sort()
+
+for (lyr in et1){
+  
+  et <- union_all_33 %>%
+          filter(okosystemtype_1 == lyr)
+  
+  st_write(et,
+           path_gpkg,
+           layer = lyr,
+           append = TRUE)
+}
 
 
 # Close duckdb connection
@@ -902,9 +934,20 @@ simple_check <- ddbs_is_simple(union_all_33,
                   dim()
 
 # Export
+path_gpkg <- "/data/P-Prosjekter2/412413_2023_no_egd/git_data/GK_processed/GK_final_UTM33.gpkg"
 path_gpkg <- paste0(str_remove(tempdir(), "Rtmp\\w*"), "GK_raw/GK_final_UTM33.gpkg")
-st_write(union_all_33,
-         path_gpkg)
+et1 <- unique(union_all_33$okosystemtype_1) %>% sort()
+
+for (lyr in et1){
+  
+  et <- union_all_33 %>%
+          filter(okosystemtype_1 == lyr)
+  
+  st_write(et,
+           path_gpkg,
+           layer = lyr,
+           append = TRUE)
+}
 
 
 # Clean checks R Environment
