@@ -2,7 +2,7 @@
 This document gives brief information on project 112644 -  Ferdigstilling av indikatorer til Eurostat og nasjonalt naturregnskap. It also provides information on how to run the code, the data, packages and functions used.
 
 ## Project
-This project was commissioned by Miljødirektoratet to NINA over the summer 2026 for a deadline on the 30th of September 2024. The purpose of the this project is to re-run the condition indicators from ecRxiv that have to be reported to Eurostat under Regulation 2024/3024. Here we only are concerened with three indicators:
+This project was commissioned by Miljødirektoratet to NINA over the summer 2026 for a deadline on the 30th of September 2026. The purpose of the this project is to re-run the condition indicators from ecRxiv that have to be reported to Eurostat under Regulation 2024/3024. Here we only are concerened with three indicators:
 
 - URGR (share of blue/green spaces in cities)
 - URAQ (concentration pf PM2.5)
