@@ -186,7 +186,7 @@ The Grunnkart is a a big dataset and, for NINA, these data were only available u
 
 Prior testing revealed that `sf` package is less performant to correct geometrical issues than the more recent `duckspatial` package, which uses DuckDB. We run the first part of the code with `duckspatial` including loading the data and the cleaning of the geometries and slivers.
 
-*Note: Most of the Grunnkart tiles are in EPSG:25832, two tiles are in EPSG:25833, one in EPSG:25835 and one in EPSG:4258. To reduce the number of operations, we choose to stay in EPSG:25832*
+*Note: Most of the Grunnkart tiles are in EPSG:25832, two tiles are in EPSG:25833, one in EPSG:25835 and one in EPSG:4258. To reduce the number of operations, we choose to stay in EPSG:25832 and re-project everything in EPSG:25833, which is the default national projection, in section 7 when we export the data.*
 
 *Note: `duckspatial` creates a duckdb database to store the data. This can become heavy very easily so the solution is to either make sure to have space on the disk, or clean the intermediate product along the way, which is what we do in this code.*
 
