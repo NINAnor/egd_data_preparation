@@ -32,7 +32,7 @@ process_raster_fn <- function(path_read, norway_mask = FALSE, path_write, files_
   # Read
   tif_rast <- rast(path_read)
   
-  if(isFALSE(norway_mask) == TRUE){
+  if(isFALSE(norway_mask) == FALSE){
     
     # Re-project norway boundary
     norway_mask_pj <- st_transform(norway_mask, crs = crs(tif_rast))
