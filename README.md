@@ -1,14 +1,27 @@
-## Purpose of this document
-This document gives brief information on project 112644 -  Ferdigstilling av indikatorer til Eurostat og nasjonalt naturregnskap. It also provides information on how to run the code, the data, packages and functions used.
+# egd-data-preparation: General purpose preparatory scripts for ecosystem condition variable calculations  
 
-## Project
-This project was commissioned by Miljødirektoratet to NINA over the summer 2026 for a deadline on the 30th of September 2026. The purpose of the this project is to re-run the condition indicators from ecRxiv that have to be reported to Eurostat under Regulation 2024/3024. Here we only are concerened with three indicators:
+## Context 
+Many ecosystem condition variables rely on public datasets. 
+Some of these datasets are required by multiple EC variables. 
+**Ecosystem type maps** are particularly important such multi-purpose datsets. 
 
-- URGR (share of blue/green spaces in cities)
-- URAQ (concentration pf PM2.5)
-- TCCD (tree cover density)
+If such multi-purpose variables require a series of data preparation steps, then these it makes sense to 
+decouple the  data preparation. This makes the EC variable calculation pathways cleaner, more modular, 
+and more efficient (the shared data preparation steps do not need to be repeated for each EC variable). 
+This also makes the variable descriptions in the [ecRxiv](https://ecrxiv.com/) simpler, clearer, and less redundant. 
 
-The code was taken from ecRxiv and adapted, the code is available in the ecrxiv_URGR_URAQ_TCCD repository. The sections on data preparation has been relocated in this repository.
+Here we present such *shared data preparation steps* for a number of primary datasets relevant for the the calculation of EC variables. 
+We particularly focus on the data needs of variables URGR, URAQ and TCCD, as well as a general purpose dataset for ET maps:
+
+- the [GK dataset](GK.md)
+- [Copernicus IMD](xxx.md)
+- [Copernicus TCD](xxx.md)
+
+The preprocessing of each dataset is described in detail in the dedicated document linked above.
+
+---
+<!-- BC: From here I did not change this file. We might want to update the rest of the file, too when we arrived on the final structure/content --> 
+
 
 ## Structure of the R project
 This project has 3 sub-folders:
