@@ -350,10 +350,6 @@ rm(list = setdiff(ls(), c("conn_gk",
 ```
 
 
-
-# BALINT ADDITIONAL CLEANING STEPS. 
-I didn't do any union before as I thought you might need all the small polygons? I also left it as a list where each item is a tile. 
-
 ## 6. Data formatting
 The goal is now to do a union of each ecosystem type per tile (counties). To do that, we start by doing a union for each ecosystem type per tile. To avoid memory issues, we have to do block processing by dividing the tiles into three groups and perform the union on these three groups separately. We decide to stop the union work here and not union at national level, so across tiles. When we started to union the ecosystem types across tiles, the number of polygons did not change that much. This is because the only places where the polygons might union are at the border of the tiles. Moreover, for URAQ and URGR, intersections are needed with Local Administrative Units, so to decrease the computing time, keeping the information on the county is very useful as we can then just download the county(ies) of relevance instead of the whole dataset.
 
@@ -723,6 +719,9 @@ rm(list = setdiff(ls(), c("conn_gk",
 
 
 ## 7. Export file
+
+### 7.1 Export extent-relevant data
+#### 7.1.1 Export one big national file
 Now, we are just going to export the dataset as a combined one, all tiles together so the dataset can be read with an SQL query and sorted directly with `st_read()` later on. There are two codes below depending on whether the duckdb connection is still active or if the user prefers to use the intermediate geopackage we already exported.
 ```{r export}
 #| eval: false
@@ -934,7 +933,6 @@ simple_check <- ddbs_is_simple(union_all_33,
                   dim()
 
 # Export
-path_gpkg <- "/data/P-Prosjekter2/412413_2023_no_egd/git_data/GK_processed/GK_final_UTM33.gpkg"
 path_gpkg <- paste0(str_remove(tempdir(), "Rtmp\\w*"), "GK_raw/GK_final_UTM33.gpkg")
 et1 <- unique(union_all_33$okosystemtype_1) %>% sort()
 
@@ -949,11 +947,47 @@ for (lyr in et1){
            append = TRUE)
 }
 
+```
+
+
+#### 7.1.2 Export files per county
+```{r export}
+#| eval: false
+#| code-summary: "Export in EPSG:25832 and EPSG:25832"
+
+# Export EPSG:25832
+path_gpkg <- paste0(str_remove(tempdir(), "Rtmp\\w*"), "GK_raw/GK_final_UTM32_")
+fylke_list <- unique(union_all$fylke_nr) %>% sort()
+
+for (fyk in fylke_list){
+  
+  gk_fyk <- union_all %>%
+              filter(fylke_nr == fyk)
+  
+  st_write(gk_fyk,
+           paste0(path_gpkg, fyk, ".gpkg"))
+}
+
+# Export EPSG:25833
+path_gpkg <- paste0(str_remove(tempdir(), "Rtmp\\w*"), "GK_raw/GK_final_UTM33_")
+fylke_list <- unique(union_all_33$fylke_nr) %>% sort()
+
+for (fyk in fylke_list){
+  
+  gk_fyk <- union_all_33 %>%
+              filter(fylke_nr == fyk)
+  
+  st_write(gk_fyk,
+           paste0(path_gpkg, fyk, ".gpkg"))
+}
+
 
 # Clean checks R Environment
-rm(list = ls())
+rm(ls())
 
 ```
+
+
 
 # 8. References
 <!--# You can add references manually or use a citation manager and add intext citations as with crossreferencing and hyperlinks. See https://quarto.org/docs/authoring/footnotes-and-citations.html -->
