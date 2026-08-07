@@ -270,7 +270,10 @@ Now we can fix geometry.
 #| code-summary: "Fix geometry issues"
 
 # Fix issues and write the table in the database
-ddbs_make_valid("grunnkart_raw",
+ddbs_make_valid("grunnkart_raw",  
+
+    ### !!! Sylvie, I think that here you start out from the original "grunkkart_raw" table, not from the de-slivered one -- pls check!
+
                 conn = conn_gk,
                 "grunnkart_valid", # checkpoint - create a data table in duckdb database
                 overwrite = TRUE)
