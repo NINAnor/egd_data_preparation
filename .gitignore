@@ -48,3 +48,8 @@ po/*~
 
 # RStudio Connect folder
 rsconnect/
+
+# user added exceptions
+#   BC: all files starting with "tmp_"
+tmp_*
+

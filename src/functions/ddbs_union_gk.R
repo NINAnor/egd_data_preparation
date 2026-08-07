@@ -2,7 +2,7 @@
 #'
 #' This function merges all the polygons of one ecosystem type at level 1
 #' of the Grunnkart across all the available tiles (fylke). This results in
-#' on table of united polygons for the ecosystem type of interest.
+#' one table of united polygons for the ecosystem type of interest.
 #'
 #'This function allows for the users to choose to either do the union across
 #'all tiles, or do the union more progressively by first merging across groups
