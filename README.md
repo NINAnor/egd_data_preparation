@@ -1,5 +1,7 @@
 # egd-data-preparation: Multi-purpose simplified ecosystem type maps for ecosystem condition variable calculations  
 
+Authors: Sylvie Clappe, Balint Czucz, Jenny Hansen -- NINA
+
 
 ## Introduction 
 
