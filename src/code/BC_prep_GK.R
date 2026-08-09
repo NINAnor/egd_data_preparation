@@ -29,46 +29,19 @@ gdb_folder <- path(rdrive, "GeoSpatialData/LandUse/Norway_Arealregnskap/Original
 # export paths (use with glue::glue)
 out_folder <- path(pdrive, "412413_2023_no_egd/git_data/GK_processed/")
 out_etm <- path(out_folder, "BC", "GK_ETM_L1_{f_id}_{yr}.gpkg")     # dissolved ET maps per fylke (or national level for "f00")
-out_ms1 <- path(out_folder, "BC", "GK_s1_{e_id}_{f_id}_{yr}.gpkg")   # simplified masks with method s1 for ET eID and fylke fID (or national for "f00") 
-out_ms2 <- path(out_folder, "BC", "GK_s2_{e_id}_{f_id}_{yr}.gpkg")   # simplified masks with method s2 for ET eID and fylke fID (or national for "f00") 
+out_ms1 <- path(out_folder, "BC", "GK_masks_s1_{f_id}_{yr}.gpkg")   # simplified masks with method s1 for ET eID and fylke fID (or national for "f00") 
+out_ms2 <- path(out_folder, "BC", "GK_masks_s2_{f_id}_{yr}.gpkg")   # simplified masks with method s2 for ET eID and fylke fID (or national for "f00") 
 
 # further knobs
 yr <- "2025"       # year of the GK data processed
-th_sliver <-  0.5  # sliver threshold [m2] (polygons smaller than this will be dropped)
-th_morph  <- 20    # morphological threshold [m] (2x of the erosion/dilation buffer width used in both simplification methods)
-th_simp   <-  2    # pre-simplify tolerance [m], well below th_morph
-n_seg     <-  2    # ST_Buffer segments per quarter-circle (default 8)
+t_sliver <-  0.5  # sliver area threshold [m2] (polygons smaller than this will be dropped)
+t_tol1   <-  0.3  # vertex simplification "bandwidth" [m] for the ETM step (curves within such a band will be straightened out)
+t_tol2   <-  3    # vertex simplification "bandwidth" [m] for the morph filtering [m] (should be well below t_morph)
+n_seg    <-  2    # ST_Buffer segments per quarter-circle for the morph filtering (default 8)
+t_morph  <- 20    # morph(ological) filtering threshold [m] (2x of the erosion/dilation buffer width used in both simplification methods)
 
-# helper functions
-h_cleanup_db <- function(conn) {  # Clean up a duckDB database (conn): remove temporary tables & views 
-  walk(dbListTables(conn), 
-       \(x) switch(str_sub(x, 1, 9), 
-                   temp_view= {dbExecute(conn_gk, sprintf("DROP VIEW IF EXISTS %s", dbQuoteIdentifier(conn_gk, x))); 0},
-                   temp_tabl= {dbExecute(conn_gk, sprintf("DROP TABLE IF EXISTS %s", dbQuoteIdentifier(conn_gk, x))); 0},
-                   1))
-  }
-
-#tabl="gk_raw"; feat= "e_id"; lon=10.7; lat=59.6; rr=1000; conn=conn_gk
-h_zoomplot <- function(tabl, feat=NULL, lon, lat, rr=2000, conn=conn_gk) { #custom zoom-in plots for visual inspection
-  # conn:    a connection (pointing at a duckspatial DB)
-  # tabl:    name of a table in conn 
-  # feat:    a colname in tabl (used for setting colours) 
-  # lon,lat: unprojected coordinates of an interesting place (looked up e.g. from google maps) 
-  # rr:      radius (m) around the point that should be shown
-  crs1 <- as_duckspatial_df(tabl, conn=conn) %>% ddbs_crs() 
-  print(tabl); print(feat); print(lat); print(lon); print(rr); print(conn)
-  zoombox <- c(lon, lat) %>% st_point %>% st_sfc(crs= 4326) %>% st_transform(crs1) %>% st_buffer(rr) %>% st_bbox() 
-  as_duckspatial_df(tabl, conn=conn) %>%
-    ddbs_crop(st_as_sf(st_as_sfc(zoombox))) %>%       # annoying false warning...
-    collect() %>%
-    mutate(types= if (is.null(feat)) "mask" else .data[[feat]]) %>%
-    ggplot() + geom_sf(aes(fill= types), alpha=.33) + scale_fill_discrete() + theme_minimal() 
-  }
-# rm(tabl, feat, lon, lat, rr, conn)
-
-zoom1 <- list(lon=10.7, lat=59.6, rr=1000) # a nice neighborhood to zoom in, relevant for BmB2 (Elvia case)
-# exec(h_zoomplot, "gk_raw", "e_id", !!!(zoom1)) #--> this is how zoom1 can be "splashed" into funbction calls 
-
+# helpers, sql queries
+source(here::here("src/code", "BC_prep_GK_helpers.R"))
 
 ###
 ###
@@ -98,14 +71,10 @@ conn_gk <- ddbs_create_conn(dbdir= f_db1, threads= nthreads, memory_limit_gb= me
 
 if (F) {  ### -- potentially useful database commands 
   conn_gk %>% dbGetInfo() %>% pluck("dbname")               # to locate the temp file used
-  conn_gk %>% dbGetQuery("PRAGMA database_size;")           # to query database size
+  conn_gk %>% dbGetQuery("PRAGMA database_size")           # to query database size
   conn_gk %>% dbExecute("DROP TABLE IF EXISTS gk_raw")      # to delete a specific table
   ddbs_stop_conn(conn_gk)     # to close the connection (does not instantly delete the temp file, it will only be deleted at session end)
   }
-
-# # conn2 <- ddbs_create_conn(f_tmp) # 
-# # as_duckspatial_df("gk_valid", conn2) %>% head %>% ddbs_collect() %>% st_crs
-# # ddbs_stop_conn(conn2)     
 
 
 ###
@@ -115,26 +84,43 @@ if (F) {  ### -- potentially useful database commands
 
 gdb_files <-  dir_ls(gdb_folder, regexp = "gdb$") 
 
-# BC: EDA phase -- restrict the exercise to a single fylke ---------------------------------!!!!
-gdb_file1 <- gdb_files[str_detect(gdb_files,"/32_")] # fylke #32 is Akershus
-fID_file1 <- gdb_file1 %>% str_extract("(?<=format/).{2}") %>% paste0("f",.) # RE finding "format/", and pulling out the next 2 characters
-# gk_crs <- st_read(gdb_files[1], query = "SELECT * FROM arealregnskap LIMIT 10") %>% st_crs()
-# ------------------------------------------------------------------------------------------
+gdb_1 <- gdb_files[str_detect(gdb_files,"/32_")] # fylke #32 is Akershus
+#-- placeholder: the "purr::map(gdb_files, function \(gdb1) {...})"-style cycle (optimised with paralell/mirai) will start here
 
-ddbs_open_dataset(gdb_file1) %>%   # starts a lazy ddbs object (in memory)
+fid_1 <- gdb_1 %>% str_extract("(?<=format/).{2}") %>% paste0("f",.) # RE finding "format/", and pulling out the next 2 characters
+
+ddbs_open_dataset(gdb_1) %>%   # starts a lazy ddbs object (in memory)
   rename(geom = geo) %>%    # GDAL defaults to "geom" for the geometry column, it is better to get rid of the ESRI conventions before thay cause pain
-  mutate(f_id= fID_file1) %>%  # fylkes are used as "tiles" -- using fid or fID as colname would be in conflict with GeoPackage primary key(!)
+  mutate(f_id= fid_1) %>%  # fylkes are used as "tiles" -- using fid or fID as colname would be in conflict with GeoPackage primary key(!)
   # mutate(eID= okosystemtype_kode %>% str_split_i(fixed("."), 1) %>% as.numeric %>% sprintf('e%02d', .)) %>%
   mutate(e_id= sql("'e' || lpad(split_part(okosystemtype_kode, '.', 1), 2, '0')")) %>% # the dbplyr-compatible version of the line above
   select(f_id, e_id, et_name= okosystemtype_1, areal_m2, geom) %>% 
   ddbs_write_table(conn= conn_gk, name= "gk_raw", overwrite =T) %>% # evaluates the lazy object & save it to the DB
   time_pipe() # puts the whole pipe into a timing wrapper   ~30s
 
+crs_1 <- as_duckspatial_df("gk_raw", conn=conn_gk) %>% ddbs_crs() 
+# crs_1 <- st_read(gdb_1, query = "SELECT * FROM arealregnskap LIMIT 10") %>% st_crs()
+
+
+# ---------------- EDA-phase hack: restrict the exercise to a small region around the "zoom1" site ---------------------------------!!!!
+#   (zoom1 is in f32 / Akershus, this hack will only work there!!!)
+if (FALSE) {
+  conn_gk %>% dbExecute("CREATE OR REPLACE TABLE gk_raw_orig AS FROM gk_raw") # make a safety copy of the original gk_raw...
+  zoombox <- c(zoom1$lon, zoom1$lat) %>% st_point %>% st_sfc(crs= 4326) %>% 
+    st_transform(crs_1) %>% st_buffer(2000) %>% st_bbox() 
+  as_duckspatial_df("gk_raw", conn=conn_gk) %>%
+    ddbs_crop(st_as_sf(st_as_sfc(zoombox))) %>%       # annoying "false" crs warning... :(
+    ddbs_write_table(conn= conn_gk, name= "gk_raw", overwrite =T) %>%   # and overwrite it with a small part of it   
+    time_pipe() #  ~2s  -- keeps only ~3000 polygons from the original 660k
+  h_cleanup_db(conn_gk)
+  } #-------------------------------------------------------------------------------------------------------------------------------!!!!
+
 if (F) { ### -- optional DB inspection 
   ddbs_list_tables(conn_gk)
-  conn_gk %>% dbGetQuery("PRAGMA database_size;")
+  conn_gk %>% dbGetQuery("PRAGMA database_size")
   conn_gk %>% dbGetQuery("SELECT * FROM gk_raw LIMIT 100" ) %>% str()
   conn_gk %>% dbGetQuery("SELECT COUNT(*) FROM gk_raw") 
+  conn_gk %>% dbGetQuery("SELECT COUNT(*) FROM gk_raw_orig") 
   tbl(conn_gk, "gk_raw") %>% glimpse()  # an alternative way to inspect the structure
   #
   # Visual smoke tests
@@ -147,68 +133,29 @@ if (F) { ### -- optional DB inspection
 ### From raw GK to clean level-1 ET maps ---
 ###
 
-# remove slivers
-as_duckspatial_df("gk_raw", conn_gk) %>% 
-  mutate(geom = sql("(UNNEST(ST_Dump(geom))).geom")) %>% # explode possible MULTIPOLYGONS into individual POLYGONS
-  mutate(area_m2_proj = sql("ST_Area(geom)")) %>%       # now calculate area for the individual polygons
-  dplyr::filter(area_m2_proj > th_sliver) %>%          # sliver cleaning
-  mutate(geom= sql("ST_MakeValid(geom)")) %>% 
-  # mutate(area_m2_valid= sql("ST_Area(geom)"))           # recalculate areas (is this needed?)
-  ddbs_write_table(conn= conn_gk, name= "gk_valid", overwrite =T) %>%
-  time_pipe() # ~30s
-h_cleanup_db(conn_gk)
-# side note: 
-#   * these "mutate+sql" operations use memory/disk more efficiently (the ddbs_... couterparts create a temporary copy of the entire table)  
+# Explode, de-sliver, and dissolve polygons based on level-1 ET
+#   an optimised pure-SQL alternative (developed with Gemini/Claude, works directly on the DB)
+query_dissolve_full %>%
+  glue(ii= "gk_raw", oo= "gk_union", sv= t_sliver, ts= t_tol1) %>%
+  dbExecute(conn = conn_gk) %>%
+  time_pipe(unit = "mins")  # ~5 min (for Akershus)
+# side note: sql GROUP BY operations are internally parallelised by duckDB  
 
 if (F) { ### Optional DB inspection 
   ddbs_list_tables(conn_gk)
-  conn_gk %>% dbGetQuery("PRAGMA database_size;") 
+  conn_gk %>% dbGetQuery("PRAGMA database_size") 
   conn_gk %>% dbGetQuery("SELECT COUNT(*) FROM gk_raw") 
-  conn_gk %>% dbGetQuery("SELECT COUNT(*) FROM gk_valid")  # in Østfold ~16000 (~4%) polygons have area < 0.5m2 (most of them are also <0.05m2) 
-  conn_gk %>% dbGetQuery("SELECT * FROM gk_raw LIMIT 100" ) %>% str()
-  conn_gk %>% dbGetQuery("SELECT * FROM gk_valid LIMIT 100" ) %>% str()
-  #  
-  # Validity checks - should all disply 0 rows
-  ddbs_is_valid("gk_valid", conn= conn_gk) %>% filter(!is_valid) %>% ddbs_collect %>% nrow
-  ddbs_is_empty("gk_valid", conn= conn_gk) %>% filter(is_empty) %>% ddbs_collect %>% nrow
-  ddbs_is_simple("gk_valid", conn= conn_gk) %>% filter(!is_simple) %>% ddbs_collect %>% nrow
-  #
-  # Visual smoke tests
-  exec(h_zoomplot, "gk_raw", "e_id", !!!(zoom1))  # the previous plot again 
-  exec(h_zoomplot, "gk_valid", "e_id", !!!(zoom1))  # gk_valid no: visible difference (as expected)
-  #
-  # Optional export (intermediate product)
-  f_tmp <- file_temp(ext="ddb")
-  as_duckspatial_df("gk_valid", conn= conn_gk) %>%
-    ddbs_write_dataset(f_tmp, gdal_driver= "GPKG", overwrite= T, layer= "gk_valid")
-    # ..., crs = "EPSG:25832",...  # BC: unsure if this is needed...
-  }
-
-# Dissolve polygons based on level-1 ET
-#   an optimised pure-SQL alternative (suggested by Gemini, works directly within the DB)
-#   writes the results directly into conn_gk, and returns a single number (the number of rows touched) 
-dbExecute(conn_gk, " 
-  CREATE OR REPLACE TABLE gk_union AS 
-    WITH dumped AS (
-      SELECT e_id, f_id, UNNEST(ST_Dump(ST_Union_Agg(geom))) AS dump_struct
-      FROM gk_valid 
-      GROUP BY e_id, f_id)
-    SELECT e_id, f_id, ST_MakeValid(dump_struct.geom) AS geom
-    FROM dumped ") %>% 
-  time_pipe(unit="mins") # ~5 min (for Akershus)
-
-if (F) { ### Optional DB inspections
-  ddbs_list_tables(conn_gk)
-  conn_gk %>% dbGetQuery("PRAGMA database_size;") 
-  conn_gk %>% dbGetQuery("SELECT COUNT(*) FROM gk_raw") 
-  conn_gk %>% dbGetQuery("SELECT COUNT(*) FROM gk_valid")
   conn_gk %>% dbGetQuery("SELECT COUNT(*) FROM gk_union")  # the N of polygons is drastically reduced (to ~20% of its orig value)
   conn_gk %>% dbGetQuery("SELECT * FROM gk_union LIMIT 100" ) %>% str() #only 3 cols: e_id, f_id, & geom (with a POLYGON geometry)
+  #  
+  # Validity checks - should all disply 0 rows
+  ddbs_is_valid("gk_union", conn= conn_gk) %>% filter(!is_valid) %>% ddbs_collect %>% nrow
+  ddbs_is_empty("gk_union", conn= conn_gk) %>% filter(is_empty) %>% ddbs_collect %>% nrow
+  ddbs_is_simple("gk_union", conn= conn_gk) %>% filter(!is_simple) %>% ddbs_collect %>% nrow
   #
   # Visual smoke tests
-  exec(h_zoomplot, "gk_raw", "e_id", !!!(zoom1))  # gk_raw again 
   exec(h_zoomplot, "gk_union", "e_id", !!!(zoom1))  # gk_union: most internal boundaries (eg. in e01-urban, e04-forest) disappeared... 
-    # ... but a few still remain, plus some very narrow channels & small islands -- these are still "nuisance" from an EC perspective)
+  exec(h_zoomplot, "gk_union", "e_id", lon=10.7, lat=59.6, rr=200)  # gk_union: most internal boundaries (eg. in e01-urban, e04-forest) disappeared... 
   }
 
 # Export level-1 ETM for each fylke (-- except the national "f00")
@@ -227,98 +174,73 @@ as_duckspatial_df("gk_union", conn= conn_gk) %>% # export as a geopackage
 #   ddbs_write_table(conn= conn_gk, name= "gk_union", overwrite =T)
 
 
-# Define SQL query templates
-
-# query_DE <- " -- dilation --> erosion   ### original
-#   CREATE OR REPLACE TABLE {oo} AS 
-#   WITH dilated_and_unioned AS (
-#     SELECT ST_Union_Agg(ST_Buffer(geom, {bd})) AS merged_geom
-#     FROM {ii}
-#     WHERE e_id = '{e_id}'
-#       AND geom IS NOT NULL
-#     ),
-#   eroded AS (
-#     SELECT ST_Buffer(merged_geom, -{bd}) AS closed_geom
-#     FROM dilated_and_unioned
-#     WHERE merged_geom IS NOT NULL
-#     ),
-#   dumped AS (
-#     SELECT UNNEST(ST_Dump(closed_geom)) AS dump_struct
-#     FROM eroded
-#     WHERE closed_geom IS NOT NULL
-#     )
-#   SELECT ST_MakeValid(dump_struct.geom) AS geom
-#   FROM dumped"
-
-query_DE <- " -- dilation --> erosion
-  CREATE OR REPLACE TABLE {oo} AS
-  WITH dilated_and_unioned AS (
-    SELECT ST_Union_Agg(ST_Buffer(ST_SimplifyPreserveTopology(geom, {ts}), {bd}, {ns})) AS merged_geom
-    FROM {ii} WHERE e_id = '{e_id}' AND geom IS NOT NULL),
-  eroded AS (
-    SELECT ST_Buffer(merged_geom, -{bd}, {ns}) AS closed_geom
-    FROM dilated_and_unioned WHERE merged_geom IS NOT NULL),
-  dumped AS (
-    SELECT UNNEST(ST_Dump(closed_geom)) AS dump_struct
-    FROM eroded WHERE closed_geom IS NOT NULL)
-  SELECT '{f_id}' AS f_id, '{e_id}' AS e_id, ST_MakeValid(dump_struct.geom) AS geom
-  FROM dumped"
-
-query_ED  <- " -- erosion --> dilation 
-  CREATE OR REPLACE TABLE {oo} AS 
-  WITH eroded AS (
-    SELECT ST_Buffer(ST_SimplifyPreserveTopology(geom, {ts}), -{bd}, {ns}) AS eroded_geom
-    FROM {ii} WHERE e_id = '{e_id}' AND geom IS NOT NULL),
-  dilated_and_unioned AS (
-    SELECT ST_Union_Agg(ST_Buffer(closed_geom, {bd}, {ns})) AS merged_geom
-    FROM eroded WHERE eroded_geom IS NOT NULL),
-  dumped AS (
-    SELECT UNNEST(ST_Dump(merged_geom)) AS dump_struct
-    FROM dilated_and_unioned WHERE merged_geom IS NOT NULL)
-  SELECT '{f_id}' AS f_id, '{e_id}' AS e_id, ST_MakeValid(dump_struct.geom) AS geom
-  FROM dumped"
-
 ### pilot exercise: pick one specific ET #urban
 ###  with method s2
-out_tmp <- out_folder %>% path("BC", "tmp_s2_{e_id}_{f_id}_{yr}-{nn}.gpkg")
+# out_tmp <- out_folder %>% path("BC", "tmp_s2_{e_id}_{f_id}_{yr}-{nn}.gpkg")
 
-#substep 1: DE
+# # explorative DEED with _just one_ ET:
+# et1 <- "e04"; o1 <- paste0("gk_DE_", et1); o2 <-paste0("gk_DEED_", et1)
+# query_DE %>%                                             # substep 1: DE
+#   glue(ii="gk_union", oo=o1, f_id="f32", e_id= et1, bd= t_morph/2, ts= t_tol2, ns= n_seg) %>%
+#   dbExecute(conn= conn_gk) %>%
+#   time_pipe(unit= "mins") # ~20 min for e01 in f32 ((was ~100 min w/o ST_Simplify & the curve vertex argument argument of ST_Buffer)) 
+# query_ED %>%                                             #substep 2: ED
+#   glue(ii= o1, oo= o2, f_id="f32", e_id= et1, bd= t_morph/2, ts= t_tol2, ns= n_seg) %>%
+#   dbExecute(conn= conn_gk) %>%
+#   time_pipe(unit="mins") # ~4 min (for e01 in f32)
+# h_cleanup_db(conn_gk)
+
+# Method s1: ED-DE -- Non-overlapping "almost-tessellation", with many small (and few larger) gaps between the ETs
 format(Sys.time(), "%H:%M:%S")
-query_DE %>% 
-  glue(ii= "gk_union", oo= "gk_DE", f_id= "f32", e_id= "e01",  
-       bd= th_morph/2, ts= th_simp, ns= n_seg) %>%
+query_ED_all %>%                                             # substep 1: ED
+  glue(ii="gk_union", oo="gk_ED", f_id="f32", bd= t_morph/2, ts= t_tol2, ns= n_seg) %>%
   dbExecute(conn= conn_gk) %>%
-  time_pipe(unit= "mins")
+  time_pipe(unit= "mins") #  
+format(Sys.time(), "%H:%M:%S")
+query_DE_all %>%                                             # substep 2: DE
+  glue(ii="gk_ED", oo="gk_EDDE", f_id="f32", bd= t_morph/2, ts= t_tol2, ns= n_seg) %>%
+  dbExecute(conn= conn_gk) %>%
+  time_pipe(unit= "mins") # 
 format(Sys.time(), "%H:%M:%S")
 as_duckspatial_df("gk_DE", conn= conn_gk) %>% # export as a geopackage
-  ddbs_write_dataset(glue(out_tmp, e_id="e01", f_id= "f32", yr=yr, nn="DE"), gdal_driver= "GPKG", overwrite= T) %>%  # Akershus
-  time_pipe() 
+  ddbs_write_dataset(glue(out_ms1, e_id="e01", f_id= "f32", yr=yr, nn="DEED"), gdal_driver= "GPKG", overwrite= T) %>%  # Akershus
+  time_pipe() # ~1s
 
-#substep 2: ED
+# Method s2: DE-ED -- Overlapping ET masks, with many small (and few larger) overlaps and few tiny gaps between the ETs 
 format(Sys.time(), "%H:%M:%S")
-query_ED %>% 
-  glue(ii="gk_DE", oo="gk_DEED", bd= th_morph/2, e_id= "e01", ts= th_simp, ns= n_seg) %>%
+query_DE_all %>%                                             # substep 1: DE
+  glue(ii="gk_union", oo="gk_DE", f_id="f32", bd= t_morph/2, ts= t_tol2, ns= n_seg) %>%
   dbExecute(conn= conn_gk) %>%
-  time_pipe(unit="mins")
+  time_pipe(unit= "mins") #  
+format(Sys.time(), "%H:%M:%S")
+query_ED_all %>%                                             # substep 2: ED
+  glue(ii="gk_DE", oo="gk_DEED", f_id="f32", bd= t_morph/2, ts= t_tol2, ns= n_seg) %>%
+  dbExecute(conn= conn_gk) %>%
+  time_pipe(unit= "mins") # 
 format(Sys.time(), "%H:%M:%S")
 as_duckspatial_df("gk_DE", conn= conn_gk) %>% # export as a geopackage
-  ddbs_write_dataset(glue(out_tmp, e_id="e01", f_id= "f32", yr=yr, nn="DEED"), gdal_driver= "GPKG", overwrite= T) %>%  # Akershus
-  time_pipe() # ~30s
+  ddbs_write_dataset(glue(out_ms2, e_id="e01", f_id= "f32", yr=yr, nn="DEED"), gdal_driver= "GPKG", overwrite= T) %>%  # Akershus
+  time_pipe() # ~1s
 
+h_cleanup_db(conn_gk)
 
 if (F) { ### Optional DB inspections
   ddbs_list_tables(conn_gk)
-  conn_gk %>% dbGetQuery("PRAGMA database_size;") 
+  conn_gk %>% dbGetQuery("PRAGMA database_size") 
   conn_gk %>% dbGetQuery("SELECT COUNT(*) FROM gk_raw") 
-  conn_gk %>% dbGetQuery("SELECT COUNT(*) FROM gk_valid") 
   conn_gk %>% dbGetQuery("SELECT COUNT(*) FROM gk_union") 
   conn_gk %>% dbGetQuery("SELECT COUNT(*) FROM gk_DE") 
-    # the N of polygons is drastically reduced (to ~20% of its orig value)
+  conn_gk %>% dbGetQuery("SELECT COUNT(*) FROM gk_ED") 
+  conn_gk %>% dbGetQuery("SELECT COUNT(*) FROM gk_DEED")
+  conn_gk %>% dbGetQuery("SELECT COUNT(*) FROM gk_EDDE") 
+  # the N of polygons is drastically reduced (to ~20% of its orig value)
   conn_gk %>% dbGetQuery("SELECT * FROM gk_union LIMIT 100" ) %>% str() #only 3 cols: e_id, f_id, & geom (with a POLYGON geometry)
   #
   # Visual smoke tests
-  exec(h_zoomplot, "gk_raw", "e_id", !!!(zoom1))  # gk_raw again 
-  exec(h_zoomplot, "gk_union", "e_id", !!!(zoom1))  # gk_union: most internal boundaries (eg. in e01-urban, e04-forest) disappeared... 
+  exec(h_zoomplot, "gk_DE", "e_id", !!!(zoom1))   #  
+  exec(h_zoomplot, "gk_ED", "e_id", !!!(zoom1))   #  
+  exec(h_zoomplot, "gk_DEED", "e_id", !!!(zoom1)) #  
+  exec(h_zoomplot, "gk_EDDE", "e_id", !!!(zoom1)) #  
   # ... but a few still remain, plus some very narrow channels & small islands -- these are still "nuisance" from an EC perspective)
   }
 
