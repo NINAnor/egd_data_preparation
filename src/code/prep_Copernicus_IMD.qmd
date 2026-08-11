@@ -184,9 +184,7 @@ Uncertainties have several sources all taking roots in the modelling used to pro
 ### 3.2 Reported uncertainties
 Copernicus reported "Confidence layers" for each of the Imperviousness datasets. In their technical guide, they explain that, to compile this indicator of uncertainty, the U-Net classification model is applied multiple times using different models from nearby tiles. The resulting standard deviation of the predictions is used as an indicator for the classification of confidence per pixel.
 
-A standard deviation of 0 indicating full agreement across all model predictions is always mapped to the maximum confidence value of 100. Conversely, the minimum confidence value of 50 is assigned when there is maximum disagreement, specifically when half of the binary classified predictions (based on a 50% density threshold) are 0 and the other half are 1. This ensures the confidence values reflect the level of consensus among models in a consistent and interpretable way.
-
-The confidence indicator is pixel-based. So each pixel has a different confidence value. 75-100 is considered as "High confidence", 50-75 as "Moderate confidence" and <50 is considered as "Low confidence".
+The confidence values are pixel-based and range from 0 to 100. In practice only values 50-100 are used as values below 50% would indicate a higher confidence in the opposite class. The recommended interpretation state that pixels with values ranging 75-100 are of high confidence, 50-75 of moderate confidence, and below 50 of low confidence.
 
 The confidence layers were only available for 2021 and 2024.
 
