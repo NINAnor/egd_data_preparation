@@ -258,7 +258,7 @@ api_list <- map(seq_along(yrs), function(i){
 
 ```
 
-We use the API query to search and dowload the data sets of relevance.
+We use the API query to search and download the data sets of relevance.
 ```{r}
 #| eval: false
 #| code-summary: "Search and dowload the data corresponding to the API query"
@@ -273,7 +273,7 @@ data_id <- map(matches, function(yr) {
 })
 
 # Set up the output directory
-output_directory <- "/data/scratch/tmp_sylvie/TCD_Copernicus"
+output_directory <- paste0(str_remove(tempdir(), "Rtmp\\w*"), "TCD_Copernicus")
 
 # Download - co-written by Sylvie Clappe and Jennifer Hansen
 walk(matches, function(yr) {
