@@ -63,11 +63,14 @@ library(dplyr)
 library(terra)
 library(carrier)
 library(mirai)
+library(hdar)
+library(jsonlite)
 
 # weird workarounds for cache issues
 conflicts_prefer(dplyr::filter)
 conflicts_prefer(dplyr::lag)
 conflicts_prefer(dplyr::select)
+conflicts_prefer(purrr::flatten)
 pull<-dplyr::pull
 
 knitr::opts_chunk$set(echo = TRUE)
@@ -189,10 +192,218 @@ The confidence layers are available for all years.
 ## 4. Data download
 
 ### 4.1 Copernicus TCD
-We download the data through API, using [WEkEO](https://help.wekeo.eu/en/articles/6416936-how-to-download-data-through-wekeo). 
+Tree canopy cover density layers can be downloaded from Copernicus for the years 2018 to 2023. This can be done using an API query through the [WEkEO website](https://help.wekeo.eu/en/articles/6416936-how-to-download-wekeo-data#h_4d7de19c7c) and the `hda` R package. A detailed tutorial can be found [here](https://help.wekeo.eu/en/articles/7035318-how-to-use-the-hdar-package-for-accessing-the-wekeo-hda-api-in-r).Note that the request through API requires the username and password from the WEkEO website so you nee dto create an account. The API query uses a bounding box but it is quite large, resulting in heavy rasters. That is why a subsequent step of cleaning has been done to mask the cells that were not in Norway, hence decreasing the size of the rasters. These processed rasters are the ones we made available on the internal NINA repository.
 
-For transparency, we show below a code to read the raster data from the zip files that are given by Copernicus. 
 *!Attention: this code, writes the rasters on the disk of the users.*
+
+First we need to set up our WekEO credentials.
+
+```{r}
+#| eval: false
+#| code-summary: "Set your WEkEO credentials"
+
+## Download data
+# Set credentials and save them in ~/.hdarc for future use
+username <- "your_username"
+password <-"your_password"
+client <- Client$new(username, password, save_credentials = TRUE)
+
+# Initialise Client
+client <- Client$new()
+
+# Check authentification
+client$get_token() 
+
+# Review and accept Terms & Condition before downloading the data
+client$show_terms()
+client$terms_and_conditions(term_id = 'all')
+
+```
+
+Now we can create the API query. It can be automatically created for you using the [Expert Data Viewer](https://data.wekeo.copernicus.eu/data?view=viewer&objects=W10%3D&layers=eyJjMCI6eyJpZCI6ImMwIiwib3BlbkRyYXdlck5hbWUiOiJzdWJzZXR0ZXIiLCJyZXBsYWNlbWVudENvbG9yTWFwSWQiOm51bGwsInZhbHVlTWluIjpudWxsLCJ2YWx1ZU1heCI6bnVsbCwibGF5ZXJJZCI6IkVPOkVFQTpEQVQ6SFJMOlRDRi9fX0RFRkFVTFRfXy90cmVlQ292ZXIiLCJ6SW5kZXgiOjIwLCJpc0luaXRpYWwiOnRydWUsImlzVmlld2FibGUiOnRydWUsInRpbWUiOjE2NzI1MzEyMDAwMDAsImlzUmVwbGFjaW5nIjpmYWxzZX19). There is an additional trick for HRL TCD though. The API format of these layers have changed and the Expert Data Viewer does not reflect this. It is still useful to take the basic API from the Expert Data Viewer and then modify it with the instructions [here](https://help.wekeo.eu/en/articles/15612836-action-required-changes-to-data-access-for-clms-hrl-datasets).
+
+```{r}
+#| eval: false
+#| code-summary: "Create the API query"
+
+# Create API queries
+# Note: use the WEkEO Data viewer that will create an automatic API
+# Note: Use "SetAOI" to set your bounding box
+yrs <- list(c("2022-01-01T00:00:00.000Z", 
+              "2022-12-31T00:00:00.000Z"),
+            c("2023-01-01T00:00:00.000Z", 
+              "2023-12-31T00:00:00.000Z"))
+
+api_list <- map(seq_along(yrs), function(i){
+  paste0('{
+  "dataset_id": "EO:JRC:DAT:CLMS",
+  "bbox": [
+    4.035020510000001,
+    57.61991392,
+    32.10650033,
+    71.32500159
+  ],
+  "startdate": "',
+  yrs[[i]][1],
+  '", 
+  "enddate": "', 
+  yrs[[i]][2],
+  '",
+  "datasetIdentifier": "clms_vlcc_tree-cover-density_europe_10m_yearly_v1",
+  "itemsPerPage": 200,
+  "startIndex": 0
+}')}
+) %>% 
+  unlist()
+
+```
+
+We use the API query to search and dowload the data sets of relevance.
+```{r}
+#| eval: false
+#| code-summary: "Search and dowload the data corresponding to the API query"
+
+# Search the datasets
+matches <- map(seq_along(api_list), ~ client$search(api_list[.x]))
+names(matches) <- c("2022", "2023")
+
+# ID of all the datasets to download
+data_id <- map(matches, function(yr) {
+  map_dfr(yr$results, ~ tibble(id = .x$id))
+})
+
+# Set up the output directory
+output_directory <- "/data/scratch/tmp_sylvie/TCD_Copernicus"
+
+# Download - co-written by Sylvie Clappe and Jennifer Hansen
+walk(matches, function(yr) {
+  
+ walk(seq_along(yr$results)[51:172], function(i) {
+  
+  product_id <- yr$results[[i]]$id
+  
+  message(
+    sprintf(
+      "Downloading %s %d/%d: %s",
+      str_extract(product_id, "(?<=TCD_S).{4}"),
+      i,
+      yr$total_count,
+      product_id
+    )
+  )
+  
+  tryCatch(
+    {
+      yr$download(output_dir = output_directory,
+                  selected_indexes = i,
+                  prompt = FALSE) },
+    error = function(e) {
+      message("Failed: ", product_id)
+      message(conditionMessage(e))
+    }
+  )
+  
+  Sys.sleep(1) # to avoid hitting API quota
+ })
+})
+
+# Clean R environment
+rm(list = ls())
+
+
+```
+
+Norway bounding box for which we download the data is quite wide and include a lot of rasters that are in Sweden and Finland, while not overlapping Norway. We do a rough clean of the rasters we downloaded but apply a mask of Norway. For this we use the administrative boundaries from Geonorge. We also re-classify the raster value of 255 as NaN.
+
+#########HERE-------------------------------------------
+
+```{r}
+#| eval: false
+#| code-summary: "Clean the data and create a final raster"
+
+## Clean data
+# Source the functions that will be needed: process_raster_fn() and files_list_fn
+source(paste0(path_fn,"/NO_TCCD_functions.R"))
+
+# Path the the raw raster data
+path_tcd_raw_list <- map(seq_along(yrs),  
+                         ~paste0("/data/scratch/tmp_sylvie/TCD_Copernicus/",
+                                 as.character(yrs[.x]),
+                                 "/"))
+
+files_to_read <- map(path_tcd_raw_list, ~files_list_fn(.x))
+
+# Create Norway country boundary based on Eurostat's LAUs
+no_eurostat <- st_read(path_lau_2024) %>%
+                mutate(union = rep("Norway", nrow(.))) %>%
+                group_by(union) %>%
+                summarise()
+
+# Create list of folder to write the final raster on NINA's internal repository
+path_write_list <- map(seq_along(yrs),  
+                         ~paste0("/data/P-Prosjekter2/412413_2023_no_egd/git_data/TCD/",
+                                 as.character(yrs[.x]),
+                                 "/"))
+
+# Run the processing function
+all_combinations <- expand.grid(seq_yrs = seq_along(files_to_read), seq_files = seq_along(files_to_read[[1]][[1]]))
+
+daemons(10)
+map2(all_combinations$seq_yrs, all_combinations$seq_files,
+             in_parallel(~ process_raster_fn(path_read = files_to_read[[.x]][[1]][.y],
+                                norway_mask = no_eurostat,
+                                path_write = path_write_list[[.x]],
+                                files_names = files_to_read[[.x]][[2]][.y]),
+                         process_raster_fn = process_raster_fn,
+                         files_to_read = files_to_read,
+                         no_eurostat= no_eurostat,
+                         path_write_list = path_write_list
+             )
+)
+
+daemons(0)
+
+# Clean R environment
+rm(list = setdiff(ls(), 
+                  c("path_degurba",
+                    "path_kom",
+                    "path_kom_nb",
+                    "path_lau",
+                    "path_lau_folder",
+                    "path_lau_2024",
+                    "path_grunnkart",
+                    "path_fn",
+                    "res_path",
+                    "lau_dgurb",
+                    "path_write_list")))
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 ```{r}
 #| eval: false
 #| code-summary: "Read the .tif from a zip file"
