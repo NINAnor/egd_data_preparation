@@ -65,12 +65,13 @@ library(carrier)
 library(mirai)
 library(hdar)
 library(jsonlite)
+library(DBI)
+library(duckspatial)
 
 # weird workarounds for cache issues
 conflicts_prefer(dplyr::filter)
 conflicts_prefer(dplyr::lag)
 conflicts_prefer(dplyr::select)
-conflicts_prefer(purrr::flatten)
 pull<-dplyr::pull
 
 knitr::opts_chunk$set(echo = TRUE)
@@ -313,234 +314,151 @@ rm(list = ls())
 
 ```
 
-Norway bounding box for which we download the data is quite wide and include a lot of rasters that are in Sweden and Finland, while not overlapping Norway. We do a rough clean of the rasters we downloaded but apply a mask of Norway. For this we use the administrative boundaries from Geonorge. We also re-classify the raster value of 255 as NaN.
-
-#########HERE-------------------------------------------
-
-```{r}
-#| eval: false
-#| code-summary: "Clean the data and create a final raster"
-
-## Clean data
-# Source the functions that will be needed: process_raster_fn() and files_list_fn
-source(paste0(path_fn,"/NO_TCCD_functions.R"))
-
-# Path the the raw raster data
-path_tcd_raw_list <- map(seq_along(yrs),  
-                         ~paste0("/data/scratch/tmp_sylvie/TCD_Copernicus/",
-                                 as.character(yrs[.x]),
-                                 "/"))
-
-files_to_read <- map(path_tcd_raw_list, ~files_list_fn(.x))
-
-# Create Norway country boundary based on Eurostat's LAUs
-no_eurostat <- st_read(path_lau_2024) %>%
-                mutate(union = rep("Norway", nrow(.))) %>%
-                group_by(union) %>%
-                summarise()
-
-# Create list of folder to write the final raster on NINA's internal repository
-path_write_list <- map(seq_along(yrs),  
-                         ~paste0("/data/P-Prosjekter2/412413_2023_no_egd/git_data/TCD/",
-                                 as.character(yrs[.x]),
-                                 "/"))
-
-# Run the processing function
-all_combinations <- expand.grid(seq_yrs = seq_along(files_to_read), seq_files = seq_along(files_to_read[[1]][[1]]))
-
-daemons(10)
-map2(all_combinations$seq_yrs, all_combinations$seq_files,
-             in_parallel(~ process_raster_fn(path_read = files_to_read[[.x]][[1]][.y],
-                                norway_mask = no_eurostat,
-                                path_write = path_write_list[[.x]],
-                                files_names = files_to_read[[.x]][[2]][.y]),
-                         process_raster_fn = process_raster_fn,
-                         files_to_read = files_to_read,
-                         no_eurostat= no_eurostat,
-                         path_write_list = path_write_list
-             )
-)
-
-daemons(0)
-
-# Clean R environment
-rm(list = setdiff(ls(), 
-                  c("path_degurba",
-                    "path_kom",
-                    "path_kom_nb",
-                    "path_lau",
-                    "path_lau_folder",
-                    "path_lau_2024",
-                    "path_grunnkart",
-                    "path_fn",
-                    "res_path",
-                    "lau_dgurb",
-                    "path_write_list")))
-
-
-```
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-```{r}
-#| eval: false
-#| code-summary: "Read the .tif from a zip file"
-
-# Call functions
-source(here::here("src", "functions", "list_zip_files.R"))
-source(here::here("src", "functions", "extract_zip_files.R"))
-
-# Path to the downloaded Copernicus data
-path_tcd <- "/data/P-Prosjekter2/412413_2023_no_egd/git_data/TCD_Copernicus"
-
-# List datasets' paths to read and their names
-files_tcd_read <- files_list_sev_fn(path_tcd)
-
-# List datasets path (here we remove the zip marker and the name of the file)
-files_tcd_write <- str_remove(files_tcd_read[[1]], "CLMS.*") %>%
-                      str_remove("/vsizip/\\{")
-
-# Run the function to read and write the rasters from the zip files directly
-library(mirai)
-daemons(10)
-map(seq_along(files_tcd_read[[1]]),
-    in_parallel( ~process_raster_fn(path_read = files_tcd_read[[1]][.x],
-                                    path_write = files_tcd_write[.x],
-                                    files_names = files_tcd_read[[2]][.x]),
-                 process_raster_fn = process_raster_fn,
-                 files_tcd_read = files_tcd_read,
-                 files_tcd_write = files_tcd_write
-    )
-)
-
-daemons(0)
-
-```
-
 ### 4.2 Copernicus IMD Confidence layers
 Now we do the same for the confidence layers.
-```{r}
-#| eval: false
-#| code-summary: "Read the .tif from a zip file"
 
-# Call functions
-source(here::here("src", "functions", "list_zip_files.R"))
-source(here::here("src", "functions", "extract_zip_files.R"))
-
-# Path to the downloaded Copernicus data
-path_tcd_unc <- "/data/P-Prosjekter2/412413_2023_no_egd/git_data/TCD_Copernicus_uncertainties"
-
-# List datasets' paths to read and their names
-files_tcd_read <- files_list_sev_fn(path_tcd_unc)
-
-# List datasets path (here we remove the zip marker and the name of the file)
-files_tcd_write <- str_remove(files_tcd_read[[1]], "CLMS.*") %>%
-                      str_remove("/vsizip/\\{")
-
-# Run the function to read and write the rasters from the zip files directly
-library(mirai)
-daemons(10)
-map(seq_along(files_tcd_read[[1]]),
-    in_parallel( ~process_raster_fn(path_read = files_tcd_read[[1]][.x],
-                                    path_write = files_tcd_write[.x],
-                                    files_names = files_tcd_read[[2]][.x]),
-                 process_raster_fn = process_raster_fn,
-                 files_tcd_read = files_tcd_read,
-                 files_tcd_write = files_tcd_write
-    )
-)
-
-daemons(0)
-
-```
-
+##TO BE DONE
 
 
 ## 5. Data cleaning and formatting
 Once the rasters (.tf) have been extracted and written on the disk, they can be read to create a virtual raster that will be used for the subsequent analyses later on.
 
-### 5.1 Copernicus IMD
+### 5.1 Copernicus TCD
+All the data have been downloaded as `.zip`. We are now going to unzip them. While we do it, we perform additional cleaning and formatting steps. Norway bounding box for which we downloaded the data is quite wide and include a lot of rasters that are in Sweden and Finland, while not overlapping Norway. We apply a mask for Norway to select the relevant rasters. For this we use the administrative boundaries from Geonorge. We also re-classify the raster value of 255 as NaN.
+
+First, we create a mask of Norway.
+```{r}
+#| eval: false
+#| code-summary: "Load the administrative boundaries"
+
+# Call function
+source(here::here("src", "functions", "api_geonorge.R"))
+
+# Open duckdb connection
+conn_tcd <- ddbs_create_conn(dbidr = "tempdir", threads = 5, memory_limit_gb = 10)
+
+# Download data in tempdir
+no_data_path <- api_geonorge("https://nedlasting.geonorge.no/api/capabilities/041f1e6e-bdbc-4091-b48f-8a5990f3cc5b", 
+                            "john.doe@email.no")
+
+st_layers(no_data_path)
+
+# Read, transform, union and write 
+dbExecute(conn_tcd, 
+            sprintf("
+              CREATE OR REPLACE TABLE '%s' AS
+              SELECT ST_Transform(
+             ST_Union_Agg(ST_MakeValid(SHAPE)),
+             'EPSG:25833',
+             'EPSG:3035',
+             always_xy := true) AS geometry
+              FROM ST_Read('%s', layer = '%s')
+            ", 
+      "norway_bd",
+      no_data_path,
+      "kommune"))
+
+# Extract dataset
+norway_mask <- as_duckspatial_df("norway_bd", conn = conn_tcd) %>%
+                ddbs_collect() %>%
+                st_set_crs(3035) # duckdb doesn't track the change of the CRS in the database so needs to be done manually
+
+# Verify tables are in my duckdb conn_pm database
+ddbs_stop_conn(conn_tcd)
+
+# Clean the R environment
+rm(list = setdiff(ls(), 
+                  c("pull",
+                    "output_directory",
+                    "norway_mask")))
+
+```
+
+Now that the mask is ready, we can unzip the files and clean the rasters.
 
 ```{r}
 #| eval: false
-#| code-summary: "Create Copernicus IMD virtual raster"
+#| code-summary: "Read the .tif from a zip file"
 
-# Code co-created by Sylvie Clappe and Balint Czucz
+# Call functions
+source(here::here("src", "functions", "list_zip_files.R"))
+source(here::here("src", "functions", "extract_zip_files.R"))
 
-# Create or load the IMD virtual rasters
-terra::setGDALconfig("GTIFF_SRS_SOURCE", "EPSG") # to quiet a GDAL warning
-path_ycd_list <- dir(path_tcd, recursive = FALSE, full.names = TRUE)
-yrs_tcd <- str_sub(path_imd_list, start = -4)
-file_tcd <- map_vec(seq_along(path_tcd_list), function(i){paste0(path_tcd_list[i], "/TCD_", yrs_tcd[i], ".vrt")})
 
-map(seq_along(file_tcd), ~ 
-               
-        # if it does not exist yet, create the virtual raster
-       if (!file.exists(file_tcd[.x])) {
-            path_tcd_list[.x] %>%
-            list.files(pattern= '.tif$', all.files= TRUE, full.names= TRUE) %>% # list of tiles
-            vrt(filename= file_tcd[.x]) 
-         
-        # otherwise just load it 
-       } else {
-        rast(file_tcd[.x])  
-       }
+# List datasets' paths to read and their names
+files_tcd_read <- files_list_one_fn(output_directory)
+
+# List datasets path (here we remove the zip marker and the name of the file)
+files_tcd_write <- str_remove(files_tcd_read[[1]], "CLMS.*") %>%
+                      str_remove("/vsizip/\\{")
+
+# Run the function to read and write the rasters from the zip files directly
+daemons(10)
+map(seq_along(files_tcd_read[[1]]),
+    in_parallel( ~process_raster_fn(path_read = files_tcd_read[[1]][.x],
+                                    path_write = files_tcd_write[.x],
+                                    files_names = files_tcd_read[[2]][.x],
+                                    geo_mask = norway_mask),
+                 process_raster_fn = process_raster_fn,
+                 files_tcd_read = files_tcd_read,
+                 files_tcd_write = files_tcd_write,
+                 norway_mask = norway_mask
     )
+)
+
+daemons(0)
+
+# Clean the R environment
+rm(list = setdiff(ls(), 
+                  c("pull",
+                    "output_directory")))
+
+```
+
+We now create a virtual raster that we will read and export as a raster for future analyses. These rasters are not heavy (<2GB each).
+
+```{r}
+#| eval: false
+#| code-summary: "Create Copernicus IMD virtual rasters and export them as rasters"
+
+## Code co-created by Sylvie Clappe and Jennifer Hansen
+
+## Create the IMD virtual rasters
+file_tcd_list <- dir(output_directory, recursive = FALSE, pattern = ".tif$", full.names = TRUE)
+yrs_tcd <- str_extract(file_tcd_list, "(?<=TCD_S).{4}") %>%
+              unique()
+file_tcd <- map_vec(seq_along(yrs_tcd), function(i){paste0(output_directory, "/TCD_", yrs_tcd[i], ".vrt")})
+
+walk(seq_along(file_tcd), function(x){
+  
+  # Select relevant .tif
+    file_tcd_list[grepl(yrs_tcd[x], file_tcd_list, ignore.case = TRUE)] %>%
+    
+  # Create virtual raster
+    vrt(filename= file_tcd[x]) } )
+               
+        
+## Read .vrt files
+rast_list <- map(seq_along(file_tcd),
+                 ~rast(file_tcd[.x]))
+
+## Add levels 
+levels_original <- levels(rast(file_tcd_list[1]))
+levels_original[[1]]$class_name[levels_original[[1]]$class_name == "outside area"] <- "outside area reclassified as NAs"
+
+rast_list <- map(rast_list,
+                 ~{levels(.x) <- levels_original
+                 return(.x)})
+
+## Export new rasters
+walk(seq_along(file_tcd),
+     ~writeRaster(rast_list[[.x]], filename = paste0(output_directory, "/TCD_", yrs_tcd[.x], ".tif")))
 
 ```
 
 
 ### 5.2 Copernicus IMD Confidence layers
-```{r}
-#| eval: false
-#| code-summary: "Create Copernicus IMD confidence virtual raster"
-
-# Code co-created by Sylvie Clappe and Balint Czucz
-
-# Create or load the IMD virtual rasters
-terra::setGDALconfig("GTIFF_SRS_SOURCE", "EPSG") # to quiet a GDAL warning
-path_tcd_list <- dir(path_tcd_unc, recursive = FALSE, full.names = TRUE)
-yrs_tcd <- str_sub(path_tcd_list, start = -4)
-file_tcd <- map_vec(seq_along(path_tcd_list), function(i){paste0(path_tcd_list[i], "/IMD_", yrs_tcd[i], ".vrt")})
-
-map(seq_along(file_tcd), ~ 
-               
-    # if it does not exist yet, create the virtual raster
-   if (!file.exists(file_tcd[.x])) {
-        path_tcd_list[.x] %>%
-        list.files(pattern= '.tif$', all.files= TRUE, full.names= TRUE) %>% # list of tiles
-        vrt(filename= file_tcd[.x]) 
-     
-    # otherwise just load it 
-   } else {
-    rast(file_tcd[.x])  
-   }
-   
-  )
-
-```
+## TO BE DONE
 
 
 ## 6. Export file
