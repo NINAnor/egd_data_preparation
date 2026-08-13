@@ -63,6 +63,9 @@ library(dplyr)
 library(terra)
 library(carrier)
 library(mirai)
+library(DBI)
+library(duckspatial)
+library(sf)
 
 # weird workarounds for cache issues
 conflicts_prefer(dplyr::filter)
@@ -308,58 +311,150 @@ rm(list = ls())
 ```
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-```{r}
-#| eval: false
-#| code-summary: "Read the .tif from a zip file"
-
-# Call functions
-source(here::here("src", "functions", "list_zip_files.R"))
-source(here::here("src", "functions", "extract_zip_files.R"))
-
-# Path to the downloaded Copernicus data
-path_imd <- "/data/P-Prosjekter2/412413_2023_no_egd/git_data/IMD_Copernicus"
-
-# List datasets' paths to read and their names
-files_imd_read <- files_list_sev_fn(path_imd)
-
-# List datasets path (here we remove the zip marker and the name of the file)
-files_imd_write <- str_remove(files_imd_read[[1]], "CLMS.*") %>%
-                      str_remove("/vsizip/\\{")
-
-# Run the function to read and write the rasters from the zip files directly
-library(mirai)
-daemons(10)
-map(seq_along(files_imd_read[[1]]),
-    in_parallel( ~process_raster_fn(path_read = files_imd_read[[1]][.x],
-                                    path_write = files_imd_write[.x],
-                                    files_names = files_imd_read[[2]][.x]),
-                 process_raster_fn = process_raster_fn,
-                 files_imd_read = files_imd_read,
-                 files_imd_write = files_imd_write
-    )
-)
-
-daemons(0)
-
-```
-
 ### 4.2 Copernicus IMD Confidence layers
 Now we do the same for the confidence layers.
+
+```{r}
+#| eval: false
+#| code-summary: "Create the API query"
+
+# Create API queries
+# Note: use the WEkEO Data viewer that will create an automatic API
+# Note: Use "SetAOI" to set your bounding box
+yrs <- seq(2018, 2024, 3)
+
+api_list <- map(seq_along(yrs), function(i){
+  paste0('{
+  "dataset_id": "EO:EEA:DAT:HRL:IMP",
+  "bbox": [
+    4.035020512779106,
+    57.619913920878176,
+    32.10650033269319,
+    71.32500159191206
+  ],
+  "productType": "Confidence layer for Imperviousness Density",
+  "resolution": "10m",
+  "year": "', yrs[i],
+  '",
+  "itemsPerPage": 200,
+  "startIndex": 0
+}')}
+) %>% 
+  unlist()
+
+```
+
+
+```{r}
+#| eval: false
+#| code-summary: "Search and dowload the data corresponding to the API query"
+
+# Search the datasets
+matches <- map(seq_along(api_list), ~ client$search(api_list[.x]))
+names(matches) <- yrs
+
+# ID of all the datasets to download
+data_id <- map(matches, function(yr) {
+  map_dfr(yr$results, ~ tibble(id = .x$id))
+})
+
+# Set up the output directory
+output_directory <- paste0(str_remove(tempdir(), "Rtmp\\w*"), "IMD_Copernicus")
+
+# Download - co-written by Sylvie Clappe and Jennifer Hansen
+walk(matches, function(yr) {
+  
+ walk(seq_along(yr$results), function(i) {
+  
+  product_id <- yr$results[[i]]$id
+  
+  message(
+    sprintf(
+      "Downloading %s %d/%d: %s",
+      str_extract(product_id, "(?<=IMD_S).{4}"),
+      i,
+      yr$total_count,
+      product_id
+    )
+  )
+  
+  tryCatch(
+    {
+      yr$download(output_dir = output_directory,
+                  selected_indexes = i,
+                  prompt = FALSE) },
+    error = function(e) {
+      message("Failed: ", product_id)
+      message(conditionMessage(e))
+    }
+  )
+  
+  Sys.sleep(1) # to avoid hitting API quota
+ })
+})
+
+# Clean R environment
+rm(list = ls())
+
+
+```
+
+#   to be done
+
+## 5. Data cleaning and formatting
+
+### 5.1 Copernicus IMD
+All the data have been downloaded as `.zip`. We are now going to unzip them. While we do it, we perform additional cleaning and formatting steps. Norway bounding box for which we downloaded the data is quite wide and include a lot of rasters that are in Sweden and Finland, while not overlapping Norway. We apply a mask for Norway to select the relevant rasters. For this we use the administrative boundaries from Geonorge. We also re-classify the raster value of 255 as NaN.
+
+First, we create a mask of Norway.
+```{r}
+#| eval: false
+#| code-summary: "Load the administrative boundaries"
+
+# Call function
+source(here::here("src", "functions", "api_geonorge.R"))
+
+# Open duckdb connection
+conn_imd <- ddbs_create_conn(dbidr = "tempdir", threads = 5, memory_limit_gb = 10)
+
+# Download data in tempdir
+no_data_path <- api_geonorge("https://nedlasting.geonorge.no/api/capabilities/041f1e6e-bdbc-4091-b48f-8a5990f3cc5b", 
+                            "john.doe@email.no")
+
+st_layers(no_data_path)
+
+# Read, transform, union and write 
+dbExecute(conn_imd, 
+            sprintf("
+              CREATE OR REPLACE TABLE '%s' AS
+              SELECT ST_Transform(
+             ST_Union_Agg(ST_MakeValid(SHAPE)),
+             'EPSG:25833',
+             'EPSG:3035',
+             always_xy := true) AS geometry
+              FROM ST_Read('%s', layer = '%s')
+            ", 
+      "norway_bd",
+      no_data_path,
+      "kommune"))
+
+# Extract dataset
+norway_mask <- as_duckspatial_df("norway_bd", conn = conn_imd) %>%
+                ddbs_collect() %>%
+                st_set_crs(3035) # duckdb doesn't track the change of the CRS in the database so needs to be done manually
+
+# Verify tables are in my duckdb conn_pm database
+ddbs_stop_conn(conn_imd)
+
+# Clean the R environment
+rm(list = setdiff(ls(), 
+                  c("pull",
+                    "output_directory",
+                    "norway_mask")))
+
+```
+
+Now that the mask is ready, we can unzip the files and clean the rasters.
 ```{r}
 #| eval: false
 #| code-summary: "Read the .tif from a zip file"
@@ -368,100 +463,86 @@ Now we do the same for the confidence layers.
 source(here::here("src", "functions", "list_zip_files.R"))
 source(here::here("src", "functions", "extract_zip_files.R"))
 
-# Path to the downloaded Copernicus data
-path_imd_unc <- "/data/P-Prosjekter2/412413_2023_no_egd/git_data/IMD_Copernicus_uncertainties"
 
 # List datasets' paths to read and their names
-files_imd_read <- files_list_sev_fn(path_imd_unc)
+files_imd_read <- files_list_one_fn(output_directory)
 
 # List datasets path (here we remove the zip marker and the name of the file)
 files_imd_write <- str_remove(files_imd_read[[1]], "CLMS.*") %>%
                       str_remove("/vsizip/\\{")
 
 # Run the function to read and write the rasters from the zip files directly
-library(mirai)
 daemons(10)
 map(seq_along(files_imd_read[[1]]),
     in_parallel( ~process_raster_fn(path_read = files_imd_read[[1]][.x],
                                     path_write = files_imd_write[.x],
-                                    files_names = files_imd_read[[2]][.x]),
+                                    files_names = files_imd_read[[2]][.x],
+                                    geo_mask = norway_mask),
                  process_raster_fn = process_raster_fn,
                  files_imd_read = files_imd_read,
-                 files_imd_write = files_imd_write
+                 files_imd_write = files_imd_write,
+                 norway_mask = norway_mask
     )
 )
 
 daemons(0)
 
+# Clean the R environment
+rm(list = setdiff(ls(), 
+                  c("pull",
+                    "output_directory")))
+
 ```
 
 
-
-## 5. Data cleaning and formatting
-Once the rasters (.tf) have been extracted and written on the disk, they can be read to create a virtual raster that will be used for the subsequent analyses later on.
-
-### 5.1 Copernicus IMD
+We now create a virtual raster that we will read and export as a raster for future analyses. These rasters are not heavy (<2GB each).
 
 ```{r}
 #| eval: false
-#| code-summary: "Create Copernicus IMD virtual raster"
+#| code-summary: "Create Copernicus IMD virtual rasters and export them as rasters"
 
-# Code co-created by Sylvie Clappe and Balint Czucz
+## Code co-created by Sylvie Clappe and Jennifer Hansen
 
-# Create or load the IMD virtual rasters
-terra::setGDALconfig("GTIFF_SRS_SOURCE", "EPSG") # to quiet a GDAL warning
-path_imd_list <- dir(path_imd, recursive = FALSE, full.names = TRUE)
-yrs_imd <- str_sub(path_imd_list, start = -4)
-file_imd <- map_vec(seq_along(path_imd_list), function(i){paste0(path_imd_list[i], "/IMD_", yrs_imd[i], ".vrt")})
+## Create the IMD virtual rasters
+output_directory <- "~/Mounts/P-Prosjekter2/412413_2023_no_egd/git_data/IMD_Copernicus/IMD_10m_2018"
+file_imd_list <- dir(output_directory, recursive = FALSE, pattern = ".tif$", full.names = TRUE)
+yrs_imd <- str_extract(file_imd_list, "(?<=IMD_S).{4}") %>%
+              unique()
 
-imd_vrt <- map(seq_along(file_imd), ~ 
+output_directory <- paste0(str_remove(tempdir(), "Rtmp\\w*"), "IMD_Copernicus")
+
+file_imd <- map_vec(seq_along(yrs_imd), function(i){paste0(output_directory, "/IMD_", yrs_imd[i], ".vrt")})
+
+walk(seq_along(file_imd), function(x){
+  
+  # Select relevant .tif
+    file_imd_list[grepl(yrs_imd[x], file_imd_list, ignore.case = TRUE)] %>%
+    
+  # Create virtual raster
+    vrt(filename= file_imd[x]) } )
                
-                # if it does not exist yet, create the virtual raster
-               if (!file.exists(file_imd[.x])) {
-                    path_imd_list[.x] %>%
-                    list.files(pattern= '.tif$', all.files= TRUE, full.names= TRUE) %>% # list of tiles
-                    vrt(filename= file_imd[.x]) 
-                 
-                # otherwise just load it 
-               } else {
-                rast(file_imd[.x])  
-               }
-               
-              )
+        
+## Read .vrt files
+rast_list <- map(seq_along(file_imd),
+                 ~rast(file_imd[.x]))
+
+## Create levels (none in the original datset)
+levels_original <- data.frame(value = c(seq(0, 100), 255),
+                              class_name = c(paste0(0:100, "% imperviousness"),
+                              "outside area reclassified as NAs"))
+
+rast_list <- map(rast_list,
+                 ~{levels(.x) <- levels_original
+                 return(.x)})
+
+## Export new rasters
+walk(seq_along(file_imd),
+     ~writeRaster(rast_list[[.x]], filename = paste0(output_directory, "/IMD_", yrs_imd[.x], ".tif")))
 
 ```
-
 
 ### 5.2 Copernicus IMD Confidence layers
-```{r}
-#| eval: false
-#| code-summary: "Create Copernicus IMD confidence virtual raster"
-
-# Code co-created by Sylvie Clappe and Balint Czucz
-
-# Create or load the IMD virtual rasters
-terra::setGDALconfig("GTIFF_SRS_SOURCE", "EPSG") # to quiet a GDAL warning
-path_imd_list <- dir(path_imd_unc, recursive = FALSE, full.names = TRUE)
-yrs_imd <- str_sub(path_imd_list, start = -4)
-file_imd <- map_vec(seq_along(path_imd_list), function(i){paste0(path_imd_list[i], "/IMD_", yrs_imd[i], ".vrt")})
-
-imd_vrt <- map(seq_along(file_imd), ~ 
-               
-                # if it does not exist yet, create the virtual raster
-               if (!file.exists(file_imd[.x])) {
-                    path_imd_list[.x] %>%
-                    list.files(pattern= '.tif$', all.files= TRUE, full.names= TRUE) %>% # list of tiles
-                    vrt(filename= file_imd[.x]) 
-                 
-                # otherwise just load it 
-               } else {
-                rast(file_imd[.x])  
-               }
-               
-              )
-
-```
-
+# TO BE DONE
 
 ## 6. Export file
 Virtual raster already exported in the previous code.
