@@ -8,7 +8,7 @@
 #' @param path_read is the path to the zip files to read. Typically the first item of the list
 #' returned by `files_list_one_fn` or `files_list_sev_fn`.
 #' 
-#' @param norway_mask is a shapefile used to mask the rasters to be read and written,
+#' @param geo_mask is a shapefile used to mask the rasters to be read and written,
 #' if relevant. Its defaut value is FALSE, which means that no mask is applied.
 #' 
 #' @param path_write is the path to where the rasters should be written on the disk.
@@ -23,7 +23,7 @@
 #'
 #' @examples
 
-process_raster_fn <- function(path_read, norway_mask = FALSE, path_write, files_names){
+process_raster_fn <- function(path_read, geo_mask = FALSE, path_write, files_names){
   
   # Load libraries for parallel computing
   library(terra)
@@ -32,10 +32,14 @@ process_raster_fn <- function(path_read, norway_mask = FALSE, path_write, files_
   # Read
   tif_rast <- rast(path_read)
   
-  if(isFALSE(norway_mask) == FALSE){
+  if(isFALSE(geo_mask) == FALSE){
     
-    # Re-project norway boundary
-    norway_mask_pj <- st_transform(norway_mask, crs = crs(tif_rast))
+    if(st_crs(geo_mask) != st_crs(tif_rast)){
+      # Re-project norway boundary
+      norway_mask_pj <- st_transform(geo_mask, crs = crs(tif_rast))
+    }else{
+      norway_mask_pj <- geo_mask
+    }
     
     # Test overlap, crop and export 
     ext_tif_rast <- ext(tif_rast)
