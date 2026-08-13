@@ -66,6 +66,7 @@ library(mirai)
 library(DBI)
 library(duckspatial)
 library(sf)
+library(hdar)
 
 # weird workarounds for cache issues
 conflicts_prefer(dplyr::filter)
@@ -305,7 +306,9 @@ walk(matches, function(yr) {
 })
 
 # Clean R environment
-rm(list = ls())
+rm(list = setdiff(ls(), 
+                  c("pull",
+                    "client")))
 
 
 ```
@@ -321,7 +324,7 @@ Now we do the same for the confidence layers.
 # Create API queries
 # Note: use the WEkEO Data viewer that will create an automatic API
 # Note: Use "SetAOI" to set your bounding box
-yrs <- seq(2018, 2024, 3)
+yrs <- seq(2021, 2024, 3)
 
 api_list <- map(seq_along(yrs), function(i){
   paste0('{
@@ -359,7 +362,7 @@ data_id <- map(matches, function(yr) {
 })
 
 # Set up the output directory
-output_directory <- paste0(str_remove(tempdir(), "Rtmp\\w*"), "IMD_Copernicus")
+output_directory <- paste0(str_remove(tempdir(), "Rtmp\\w*"), "IMD_Copernicus_confidence")
 
 # Download - co-written by Sylvie Clappe and Jennifer Hansen
 walk(matches, function(yr) {
@@ -371,7 +374,7 @@ walk(matches, function(yr) {
   message(
     sprintf(
       "Downloading %s %d/%d: %s",
-      str_extract(product_id, "(?<=IMD_S).{4}"),
+      str_extract(product_id, "(?<=IMDCL_S).{4}"),
       i,
       yr$total_count,
       product_id
