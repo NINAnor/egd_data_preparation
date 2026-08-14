@@ -39,8 +39,8 @@ api_geonorge <- function(geonorge_url, email_address){
     
     #2# httr2:::req_perform() sends API request for dataset's capabilities
     dt_cap <- request(sprintf(geonorge_url)) %>% # create request
-      req_headers("Accept" = "application/json") %>% # create request
-      req_perform()
+                  req_headers("Accept" = "application/json") %>% # create request
+                  req_perform()
     
     cap_all <- resp_body_json(dt_cap, simplifyVector = TRUE)
     
