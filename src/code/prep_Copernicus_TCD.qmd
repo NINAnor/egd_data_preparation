@@ -67,6 +67,8 @@ library(hdar)
 library(jsonlite)
 library(DBI)
 library(duckspatial)
+library(sf)
+library(httr2)
 
 # weird workarounds for cache issues
 conflicts_prefer(dplyr::filter)
@@ -309,7 +311,9 @@ walk(matches, function(yr) {
 })
 
 # Clean R environment
-rm(list = ls())
+rm(list = setdiff(ls(), 
+                  c("pull",
+                    "client")))
 
 
 ```
@@ -317,8 +321,104 @@ rm(list = ls())
 ### 4.2 Copernicus IMD Confidence layers
 Now we do the same for the confidence layers.
 
-##TO BE DONE
+```{r}
+#| eval: false
+#| code-summary: "Create the API query"
 
+# Create API queries
+# Note: use the WEkEO Data viewer that will create an automatic API
+# Note: Use "SetAOI" to set your bounding box
+yrs <- list(c("2018-01-01T00:00:00.000Z", 
+              "2018-12-31T00:00:00.000Z"),
+            c("2019-01-01T00:00:00.000Z", 
+              "2019-12-31T00:00:00.000Z"),
+            c("2020-01-01T00:00:00.000Z", 
+              "2020-12-31T00:00:00.000Z"),
+            c("2021-01-01T00:00:00.000Z", 
+              "2021-12-31T00:00:00.000Z"),
+            c("2022-01-01T00:00:00.000Z", 
+              "2022-12-31T00:00:00.000Z"),
+            c("2023-01-01T00:00:00.000Z", 
+              "2023-12-31T00:00:00.000Z"))
+
+api_list <- map(seq_along(yrs), function(i){
+  paste0('{
+  "dataset_id": "EO:JRC:DAT:CLMS",
+  "bbox": [
+    4.035020510000001,
+    57.61991392,
+    32.10650033,
+    71.32500159
+  ],
+  "startdate": "',
+  yrs[[i]][1],
+  '", 
+  "enddate": "', 
+  yrs[[i]][2],
+  '",
+  "datasetIdentifier": "clms_vlcc_tree-cover-density-confidence-layer_europe_10m_yearly_v1",
+  "itemsPerPage": 200,
+  "startIndex": 0
+}')}
+) %>% 
+  unlist()
+
+```
+
+```{r}
+#| eval: false
+#| code-summary: "Search and dowload the data corresponding to the API query"
+
+# Search the datasets
+matches <- map(seq_along(api_list), ~ client$search(api_list[.x]))
+names(matches) <- as.character(seq(2018, 2023, 1))
+
+# ID of all the datasets to download
+data_id <- map(matches, function(yr) {
+  map_dfr(yr$results, ~ tibble(id = .x$id))
+})
+
+# Set up the output directory
+output_directory <- paste0(str_remove(tempdir(), "Rtmp\\w*"), "TCD_Copernicus_confidence")
+
+# Download - co-written by Sylvie Clappe and Jennifer Hansen
+walk(matches, function(yr) {
+  
+ walk(seq_along(yr$results), function(i) {
+  
+  product_id <- yr$results[[i]]$id
+  
+  message(
+    sprintf(
+      "Downloading %s %d/%d: %s",
+      str_extract(product_id, "(?<=TCDCL_S).{4}"),
+      i,
+      yr$total_count,
+      product_id
+    )
+  )
+  
+  tryCatch(
+    {
+      yr$download(output_dir = output_directory,
+                  selected_indexes = i,
+                  prompt = FALSE) },
+    error = function(e) {
+      message("Failed: ", product_id)
+      message(conditionMessage(e))
+    }
+  )
+  
+  Sys.sleep(1) # to avoid hitting API quota
+ })
+})
+
+# Clean R environment
+rm(list = setdiff(ls(), 
+                  c("pull")))
+
+
+```
 
 ## 5. Data cleaning and formatting
 Once the rasters (.tf) have been extracted and written on the disk, they can be read to create a virtual raster that will be used for the subsequent analyses later on.
@@ -427,6 +527,7 @@ We now create a virtual raster that we will read and export as a raster for futu
 file_tcd_list <- dir(output_directory, recursive = FALSE, pattern = ".tif$", full.names = TRUE)
 yrs_tcd <- str_extract(file_tcd_list, "(?<=TCD_S).{4}") %>%
               unique()
+
 file_tcd <- map_vec(seq_along(yrs_tcd), function(i){paste0(output_directory, "/TCD_", yrs_tcd[i], ".vrt")})
 
 walk(seq_along(file_tcd), function(x){
@@ -458,15 +559,92 @@ walk(seq_along(file_tcd),
 
 
 ### 5.2 Copernicus IMD Confidence layers
-## TO BE DONE
+```{r}
+#| eval: false
+#| code-summary: "Read the .tif from a zip file"
 
+# Call functions
+source(here::here("src", "functions", "list_zip_files.R"))
+source(here::here("src", "functions", "extract_zip_files.R"))
+
+# Set up the output directory
+output_directory <- paste0(str_remove(tempdir(), "Rtmp\\w*"), "TCD_Copernicus_confidence")
+
+# List datasets' paths to read and their names
+files_tcd_read <- files_list_one_fn(output_directory)
+
+# List datasets path (here we remove the zip marker and the name of the file)
+files_tcd_write <- str_remove(files_tcd_read[[1]], "CLMS.*") %>%
+                      str_remove("/vsizip/\\{")
+
+# Run the function to read and write the rasters from the zip files directly
+daemons(10)
+map(seq_along(files_tcd_read[[1]]),
+    in_parallel( ~process_raster_fn(path_read = files_tcd_read[[1]][.x],
+                                    path_write = files_tcd_write[.x],
+                                    files_names = files_tcd_read[[2]][.x],
+                                    geo_mask = norway_mask),
+                 process_raster_fn = process_raster_fn,
+                 files_tcd_read = files_tcd_read,
+                 files_tcd_write = files_tcd_write,
+                 norway_mask = norway_mask
+    )
+)
+
+daemons(0)
+
+# Clean the R environment
+rm(list = setdiff(ls(), 
+                  c("pull",
+                    "output_directory")))
+
+```
+
+```{r}
+#| eval: false
+#| code-summary: "Create Copernicus IMD virtual rasters and export them as rasters"
+
+## Code co-created by Sylvie Clappe and Jennifer Hansen
+
+## Create the IMD virtual rasters
+file_tcd_list <- dir(output_directory, recursive = FALSE, pattern = ".tif$", full.names = TRUE)
+yrs_tcd <- str_extract(file_tcd_list, "(?<=TCDCL_S).{4}") %>%
+              unique()
+
+file_tcd <- map_vec(seq_along(yrs_tcd), function(i){paste0(output_directory, "/TCDCL_", yrs_tcd[i], ".vrt")})
+
+walk(seq_along(file_tcd), function(x){
+  
+  # Select relevant .tif
+    file_tcd_list[grepl(yrs_tcd[x], file_tcd_list, ignore.case = TRUE)] %>%
+    
+  # Create virtual raster
+    vrt(filename= file_tcd[x]) } )
+               
+        
+## Read .vrt files
+rast_list <- map(seq_along(file_tcd),
+                 ~rast(file_tcd[.x]))
+
+## Add levels 
+levels_original <- levels(rast(file_tcd_list[1]))
+levels_original[[1]]$class_name[levels_original[[1]]$class_name == "outside area"] <- "outside area reclassified as NAs"
+
+rast_list <- map(rast_list,
+                 ~{levels(.x) <- levels_original
+                 return(.x)})
+
+## Export new rasters
+walk(seq_along(file_tcd),
+     ~writeRaster(rast_list[[.x]], filename = paste0(output_directory, "/TCDCL_", yrs_tcd[.x], ".tif")))
+
+```
 
 ## 6. Export file
 Virtual raster already exported in the previous code.
 
 ## 7. Author contributions
 
-<!-- Fill in CReDIT and MeRIT statments to clarify the contributions from individual authors. For MeRIT, see https://www.nature.com/articles/s41467-023-37039-1. For CRedit, see https://credit.niso.org/. You can start with the template structur below, and just delete the rows you dont use.  -->
 
 **CRediT statement**
 
