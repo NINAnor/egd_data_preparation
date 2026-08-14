@@ -198,7 +198,7 @@ conn_gk <- ddbs_create_conn(dbdir = "tempdir", threads = 10, memory_limit_gb = 3
 
 ```
 
-Now we can read the data and write them on our temporary DuckDB database. We re-project on the fly to EPSG:25832 if necessary. This process takes a bit of time due to the size of the data (~10mins).
+Now we can read the data and write them on our temporary DuckDB database. As we will do all the operations per fylke, we do not re-project and keep the original GK CRS for now. At the Export section, we will produce several geopackages with different projections. This process takes a bit of time due to the size of the data (~10mins).
 ```{r}
 #| eval: false
 #| code-summary: "Read the sf objects from gdb"
@@ -214,7 +214,7 @@ gdb_files <- list.files(gdb_folder, pattern = "_gdb\\.gdb$",
 # Main CRS - EPSG:25832
 gk_crs <- st_read(gdb_files[1], 
                   query = "SELECT * FROM arealregnskap LIMIT 10") %>%
-  st_crs()
+            st_crs()
 
 # # Remove grunnkart_raw dataset if aleardy in my db connection
 # dbExecute(conn_gk, "DROP TABLE IF EXISTS grunnkart_raw")
@@ -224,11 +224,28 @@ source(here::here("src", "functions", "ddbs_read_and_transform_gk.R"))
 
 db_gk <- gdb_files %>%
   walk( ~ddbs_read_and_transform_gk(data_path_gdb = .,
-                                    conn_name = conn_gk,
-                                    crs_proj = gk_crs))
+                                    conn_name = conn_gk))
 
-# Verify table is in my duckdb conn_gk database
+# Verify tables are in my duckdb conn_gk database
 ddbs_list_tables(conn_gk)
+
+# Clean duckdb database
+tables <- dbListTables(conn_gk)
+tables <- keep(tables, startsWith(tables, "temp_"))
+
+for (tbl in tables) {
+
+  if(substr(tbl, 1, 9) == "temp_view"){
+
+    dbExecute(conn_gk, sprintf("DROP VIEW IF EXISTS %s", dbQuoteIdentifier(conn_gk, tbl)))
+
+  }else{
+
+    dbExecute(conn_gk, sprintf("DROP TABLE IF EXISTS %s", dbQuoteIdentifier(conn_gk, tbl)))
+
+  }
+
+}
 
 ```
 
@@ -269,8 +286,8 @@ Now we can fix geometry.
 #| code-summary: "Fix geometry issues"
 
 # Fix issues and write the table in the database
-ddbs_make_valid("grunnkart_raw",
-                conn = conn_gk,
+db_gk_sliver_cln %>%
+ddbs_make_valid(conn = conn_gk,
                 "grunnkart_valid", # checkpoint - create a data table in duckdb database
                 overwrite = TRUE)
 
@@ -743,7 +760,7 @@ union_all <- tile_union_ddbs %>%
               select(!tile_name)
 
 # Export
-path_gpkg <- paste0(str_remove(tempdir(), "Rtmp\\w*"), "GK_raw/GK_final_UTM32.gpkg")
+path_gpkg <- paste0(str_remove(tempdir(), "Rtmp\\w*"), "GK_raw/GK_final_UTM32_f00.gpkg")
 et1 <- unique(union_all$okosystemtype_1) %>% sort()
 
 for (lyr in et1){
@@ -805,7 +822,7 @@ union_all <- union_all %>%
                 select(!tile_name)
 
 # Export
-path_gpkg <- paste0(str_remove(tempdir(), "Rtmp\\w*"), "GK_raw/GK_final_UTM32.gpkg")
+path_gpkg <- paste0(str_remove(tempdir(), "Rtmp\\w*"), "GK_raw/GK_final_UTM32_f00.gpkg")
 et1 <- unique(union_all$okosystemtype_1) %>% sort()
 
 for (lyr in et1){
@@ -875,7 +892,7 @@ simple_check <- ddbs_is_simple("grunnkart_33",
                   dim()
 
 # Export
-path_gpkg <- paste0(str_remove(tempdir(), "Rtmp\\w*"), "GK_raw/GK_final_UTM33.gpkg")
+path_gpkg <- paste0(str_remove(tempdir(), "Rtmp\\w*"), "GK_raw/GK_final_UTM33_f00.gpkg")
 union_all_33 <- as_duckspatial_df("grunnkart_33",
                    conn = conn_gk) %>%
                     select(!fid)
@@ -933,7 +950,7 @@ simple_check <- ddbs_is_simple(union_all_33,
                   dim()
 
 # Export
-path_gpkg <- paste0(str_remove(tempdir(), "Rtmp\\w*"), "GK_raw/GK_final_UTM33.gpkg")
+path_gpkg <- paste0(str_remove(tempdir(), "Rtmp\\w*"), "GK_raw/GK_final_UTM33_f00.gpkg")
 et1 <- unique(union_all_33$okosystemtype_1) %>% sort()
 
 for (lyr in et1){
@@ -956,7 +973,7 @@ for (lyr in et1){
 #| code-summary: "Export in EPSG:25832 and EPSG:25832"
 
 # Export EPSG:25832
-path_gpkg <- paste0(str_remove(tempdir(), "Rtmp\\w*"), "GK_raw/GK_final_UTM32_")
+path_gpkg <- paste0(str_remove(tempdir(), "Rtmp\\w*"), "GK_raw/GK_final_UTM32_f")
 fylke_list <- unique(union_all$fylke_nr) %>% sort()
 
 for (fyk in fylke_list){
@@ -969,7 +986,7 @@ for (fyk in fylke_list){
 }
 
 # Export EPSG:25833
-path_gpkg <- paste0(str_remove(tempdir(), "Rtmp\\w*"), "GK_raw/GK_final_UTM33_")
+path_gpkg <- paste0(str_remove(tempdir(), "Rtmp\\w*"), "GK_raw/GK_final_UTM33_f")
 fylke_list <- unique(union_all_33$fylke_nr) %>% sort()
 
 for (fyk in fylke_list){
