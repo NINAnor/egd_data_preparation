@@ -143,6 +143,7 @@ meta |>
 
 <!--# Update this logg with short messages for each update -->
 - 13 July 2026 - First draft version
+- 14 August 2026 - Final draft
 :::
 
 
@@ -402,7 +403,6 @@ rm(list = ls())
 
 ```
 
-#   to be done
 
 ## 5. Data cleaning and formatting
 
@@ -466,6 +466,100 @@ Now that the mask is ready, we can unzip the files and clean the rasters.
 source(here::here("src", "functions", "list_zip_files.R"))
 source(here::here("src", "functions", "extract_zip_files.R"))
 
+# Set up the output directory
+output_directory <- paste0(str_remove(tempdir(), "Rtmp\\w*"), "IMD_Copernicus")
+
+# List datasets' paths to read and their names
+files_imd_read <- files_list_one_fn(output_directory)
+
+# List datasets path (here we remove the zip marker and the name of the file)
+files_imd_write <- str_remove(files_imd_read[[1]], "CLMS.*") %>%
+                      str_remove("/vsizip/\\{")
+
+# Run the function to read and write the rasters from the zip files directly
+daemons(10)
+map(seq_along(files_imd_read[[1]]),
+    in_parallel( ~process_raster_fn(path_read = files_imd_read[[1]][.x],
+                                    path_write = files_imd_write[.x],
+                                    files_names = files_imd_read[[2]][.x],
+                                    geo_mask = norway_mask),
+                 process_raster_fn = process_raster_fn,
+                 files_imd_read = files_imd_read,
+                 files_imd_write = files_imd_write,
+                 norway_mask = norway_mask
+    )
+)
+
+daemons(0)
+
+# Clean the R environment
+rm(list = setdiff(ls(), 
+                  c("pull",
+                    "output_directory",
+                    "norway_mask")))
+
+```
+
+
+We now create a virtual raster that we will read and export as a raster for future analyses. These rasters are not heavy (<2GB each).
+
+```{r}
+#| eval: false
+#| code-summary: "Create Copernicus IMD virtual rasters and export them as rasters"
+
+## Code co-created by Sylvie Clappe and Jennifer Hansen
+
+## Create the IMD virtual rasters
+file_imd_list <- dir(output_directory, recursive = FALSE, pattern = ".tif$", full.names = TRUE)
+yrs_imd <- str_extract(file_imd_list, "(?<=IMD_S).{4}") %>%
+              unique()
+
+file_imd <- map_vec(seq_along(yrs_imd), function(i){paste0(output_directory, "/IMD_", yrs_imd[i], ".vrt")})
+
+walk(seq_along(file_imd), function(x){
+  
+  # Select relevant .tif
+    file_imd_list[grepl(yrs_imd[x], file_imd_list, ignore.case = TRUE)] %>%
+    
+  # Create virtual raster
+    vrt(filename= file_imd[x]) } )
+               
+        
+## Read .vrt files
+rast_list <- map(seq_along(file_imd),
+                 ~rast(file_imd[.x]))
+
+## Create levels (none in the original datset)
+levels_original <- data.frame(value = c(seq(0, 100), 255),
+                              class_name = c(paste0(0:100, "% imperviousness"),
+                              "outside area reclassified as NAs"))
+
+rast_list <- map(rast_list,
+                 ~{levels(.x) <- levels_original
+                 return(.x)})
+
+## Export new rasters
+walk(seq_along(file_imd),
+     ~writeRaster(rast_list[[.x]], filename = paste0(output_directory, "/IMD_", yrs_imd[.x], ".tif")))
+
+## Clean R Environment
+rm(list = setdiff(ls(), 
+                  c("pull",
+                    "norway_mask")))
+
+```
+
+### 5.2 Copernicus IMD Confidence layers
+```{r}
+#| eval: false
+#| code-summary: "Read the .tif from a zip file"
+
+# Call functions
+source(here::here("src", "functions", "list_zip_files.R"))
+source(here::here("src", "functions", "extract_zip_files.R"))
+
+# Set up the output directory
+output_directory <- paste0(str_remove(tempdir(), "Rtmp\\w*"), "IMD_Copernicus_confidence")
 
 # List datasets' paths to read and their names
 files_imd_read <- files_list_one_fn(output_directory)
@@ -497,9 +591,6 @@ rm(list = setdiff(ls(),
 
 ```
 
-
-We now create a virtual raster that we will read and export as a raster for future analyses. These rasters are not heavy (<2GB each).
-
 ```{r}
 #| eval: false
 #| code-summary: "Create Copernicus IMD virtual rasters and export them as rasters"
@@ -507,14 +598,11 @@ We now create a virtual raster that we will read and export as a raster for futu
 ## Code co-created by Sylvie Clappe and Jennifer Hansen
 
 ## Create the IMD virtual rasters
-output_directory <- "~/Mounts/P-Prosjekter2/412413_2023_no_egd/git_data/IMD_Copernicus/IMD_10m_2018"
 file_imd_list <- dir(output_directory, recursive = FALSE, pattern = ".tif$", full.names = TRUE)
-yrs_imd <- str_extract(file_imd_list, "(?<=IMD_S).{4}") %>%
+yrs_imd <- str_extract(file_imd_list, "(?<=IMDCL_S).{4}") %>%
               unique()
 
-output_directory <- paste0(str_remove(tempdir(), "Rtmp\\w*"), "IMD_Copernicus")
-
-file_imd <- map_vec(seq_along(yrs_imd), function(i){paste0(output_directory, "/IMD_", yrs_imd[i], ".vrt")})
+file_imd <- map_vec(seq_along(yrs_imd), function(i){paste0(output_directory, "/IMDCL_", yrs_imd[i], ".vrt")})
 
 walk(seq_along(file_imd), function(x){
   
@@ -531,7 +619,7 @@ rast_list <- map(seq_along(file_imd),
 
 ## Create levels (none in the original datset)
 levels_original <- data.frame(value = c(seq(0, 100), 255),
-                              class_name = c(paste0(0:100, "% imperviousness"),
+                              class_name = c(paste0(0:100, "% confidence"),
                               "outside area reclassified as NAs"))
 
 rast_list <- map(rast_list,
@@ -540,19 +628,17 @@ rast_list <- map(rast_list,
 
 ## Export new rasters
 walk(seq_along(file_imd),
-     ~writeRaster(rast_list[[.x]], filename = paste0(output_directory, "/IMD_", yrs_imd[.x], ".tif")))
+     ~writeRaster(rast_list[[.x]], filename = paste0(output_directory, "/IMDCL_", yrs_imd[.x], ".tif")))
+
+## Clean R Environment
+rm(list = ls())
 
 ```
-
-### 5.2 Copernicus IMD Confidence layers
-# TO BE DONE
 
 ## 6. Export file
 Virtual raster already exported in the previous code.
 
 ## 7. Author contributions
-
-<!-- Fill in CReDIT and MeRIT statments to clarify the contributions from individual authors. For MeRIT, see https://www.nature.com/articles/s41467-023-37039-1. For CRedit, see https://credit.niso.org/. You can start with the template structur below, and just delete the rows you dont use.  -->
 
 **CRediT statement**
 
