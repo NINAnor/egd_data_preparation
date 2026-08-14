@@ -51,7 +51,7 @@ api_geonorge <- function(geonorge_url, email_address){
     
     projection <- cap_choice[[373]]$projections[[1]] # ESPG:25833
     
-    format <- cap_choice[[373]]$formats[[4]]$name # FILEGDB
+    format <- cap_choice[[373]]$formats[[2]]$name # FILEGDB
     
     area <- cap_choice[[373]] # Norway with Svalbard
     
