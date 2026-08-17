@@ -15,7 +15,7 @@
 #' @param email_address the email address that should be put in the API request
 #'
 #' @return the function downloads the data into a temporary file and read the data
-#' from there. The function thus returns the path of all .gdb file that have been
+#' from there. The function thus returns the path of all .gdb or geojson file that have been
 #' downloaded in the temporary directory.
 #' 
 #' @export
@@ -49,9 +49,9 @@ api_geonorge <- function(geonorge_url, email_address){
                     req_perform() %>%
                     resp_body_json()
     
-    projection <- cap_choice[[373]]$projections[[1]] # ESPG:25833
+    projection <- cap_choice[[373]]$projections[[1]] # ESPG:3035
     
-    format <- cap_choice[[373]]$formats[[2]]$name # FILEGDB
+    format <- cap_choice[[373]]$projections[[2]]$name # GEOJSON
     
     area <- cap_choice[[373]] # Norway with Svalbard
     
@@ -111,7 +111,7 @@ api_geonorge <- function(geonorge_url, email_address){
     unzip(destination_tmp, exdir = temp_dir)
     
     # Use "\\.gdb$" pattern to identify the file to read
-    gdb_file <- list.files(temp_dir, pattern = "\\.gdb$", full.names = TRUE)
+    gdb_file <- list.files(temp_dir, pattern = "\\.gdb$|\\.geojson$", full.names = TRUE)
     
     }
     
