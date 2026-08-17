@@ -18,7 +18,7 @@
 ddbs_read_and_transform_gk <- function(data_path_gdb, conn_name, crs_proj = NULL){
   
   # Tile name
-  tile_name <- paste0("tile_", str_extract(data_path_gdb, "(?<=format/).{2}"))
+  tile_name <- paste0("f", str_extract(data_path_gdb, "(?<=format/).{2}"))
   
   # Tile CRS
   tile_crs <- st_read(data_path_gdb, query = "SELECT * FROM arealregnskap LIMIT 10") %>%
