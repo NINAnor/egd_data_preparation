@@ -1,10 +1,10 @@
 #' Read data from Geonroge through an API request
 #'
 #' This function aims at reading Norway administrative boundaries spatial data 
-#' from Geonorge in EPSG:25833, and format .gdb through an API request. It is not 
+#' from Geonorge in EPSG:3035, and format .gdb through an API request. It is not 
 #' guaranteed that this function will work "as is" with all Geonorge datasets, 
 #' minor adjustments might be needed. If the user wishes to download using another 
-#' project than EPSG:25833, the code of the function should be modified to reflect 
+#' project than EPSG:3035, the code of the function should be modified to reflect 
 #' this. Likewise, the code buidls the API request based on the geographic area
 #' requested. THe code needs to be updated (looking at cap_choice) to reflect
 #' the correct goegraphic area.
@@ -51,7 +51,7 @@ api_geonorge <- function(geonorge_url, email_address){
     
     projection <- cap_choice[[373]]$projections[[1]] # ESPG:3035
     
-    format <- cap_choice[[373]]$projections[[2]]$name # GEOJSON
+    format <- cap_choice[[373]]$projections[[2]]$formats[[2]]$name # GEOJSON
     
     area <- cap_choice[[373]] # Norway with Svalbard
     
