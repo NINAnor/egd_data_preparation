@@ -283,7 +283,7 @@ output_directory <- paste0(str_remove(tempdir(), "Rtmp\\w*"), "TCD_Copernicus")
 # Download - co-written by Sylvie Clappe and Jennifer Hansen
 walk(matches, function(yr) {
   
- walk(seq_along(yr$results)[51:172], function(i) {
+ walk(seq_along(yr$results), function(i) {
   
   product_id <- yr$results[[i]]$id
   
@@ -443,29 +443,32 @@ conn_tcd <- ddbs_create_conn(dbidr = "tempdir", threads = 5, memory_limit_gb = 1
 
 # Download data in tempdir
 no_data_path <- api_geonorge("https://nedlasting.geonorge.no/api/capabilities/041f1e6e-bdbc-4091-b48f-8a5990f3cc5b", 
-                            "john.doe@email.no")
+                            "john.doe@email.no") # be careful, it seems that the rank of formats available changes all the so the function needs to be adapted
 
-st_layers(no_data_path)
+# Name of the layer, geom column and CRS
+layers <- st_layers(no_data_path)
+layers <- layers$name
+
+db_colnames <- dbGetQuery(conn_tcd, sprintf("DESCRIBE SELECT * FROM ST_Read('%s', layer = '%s')", no_data_path, layers))
+geom_name <- db_colnames$column_name[grepl("GEOMETRY", db_colnames$column_type)]
+
+
 
 # Read, transform, union and write 
 dbExecute(conn_tcd, 
-            sprintf("
-              CREATE OR REPLACE TABLE '%s' AS
-              SELECT ST_Transform(
-             ST_Union_Agg(ST_MakeValid(SHAPE)),
-             'EPSG:25833',
-             'EPSG:3035',
-             always_xy := true) AS geometry
-              FROM ST_Read('%s', layer = '%s')
-            ", 
+            sprintf('
+              CREATE OR REPLACE TABLE "%s" AS
+              SELECT ST_Union_Agg(ST_MakeValid("%s")) AS geometry
+              FROM ST_Read("%s", layer = "%s")
+            ', 
       "norway_bd",
+      geom_name,
       no_data_path,
-      "kommune"))
+      layers))
 
 # Extract dataset
 norway_mask <- as_duckspatial_df("norway_bd", conn = conn_tcd) %>%
-                ddbs_collect() %>%
-                st_set_crs(3035) # duckdb doesn't track the change of the CRS in the database so needs to be done manually
+                ddbs_collect() 
 
 # Verify tables are in my duckdb conn_pm database
 ddbs_stop_conn(conn_tcd)
@@ -473,7 +476,6 @@ ddbs_stop_conn(conn_tcd)
 # Clean the R environment
 rm(list = setdiff(ls(), 
                   c("pull",
-                    "output_directory",
                     "norway_mask")))
 
 ```
@@ -488,6 +490,8 @@ Now that the mask is ready, we can unzip the files and clean the rasters.
 source(here::here("src", "functions", "list_zip_files.R"))
 source(here::here("src", "functions", "extract_zip_files.R"))
 
+# Set up the output directory
+output_directory <- paste0(str_remove(tempdir(), "Rtmp\\w*"), "TCD_Copernicus")
 
 # List datasets' paths to read and their names
 files_tcd_read <- files_list_one_fn(output_directory)
@@ -515,7 +519,8 @@ daemons(0)
 # Clean the R environment
 rm(list = setdiff(ls(), 
                   c("pull",
-                    "output_directory")))
+                    "output_directory",
+                    "norway_mask")))
 
 ```
 
@@ -523,11 +528,11 @@ We now create a virtual raster that we will read and export as a raster for futu
 
 ```{r}
 #| eval: false
-#| code-summary: "Create Copernicus IMD virtual rasters and export them as rasters"
+#| code-summary: "Create Copernicus TCD virtual rasters and export them as rasters"
 
 ## Code co-created by Sylvie Clappe and Jennifer Hansen
 
-## Create the IMD virtual rasters
+## Create the TCD virtual rasters
 file_tcd_list <- dir(output_directory, recursive = FALSE, pattern = ".tif$", full.names = TRUE)
 yrs_tcd <- str_extract(file_tcd_list, "(?<=TCD_S).{4}") %>%
               unique()
@@ -558,6 +563,10 @@ rast_list <- map(rast_list,
 ## Export new rasters
 walk(seq_along(file_tcd),
      ~writeRaster(rast_list[[.x]], filename = paste0(output_directory, "/TCD_", yrs_tcd[.x], ".tif")))
+
+rm(list = setdiff(ls(), 
+                  c("pull",
+                    "norway_mask")))
 
 ```
 
