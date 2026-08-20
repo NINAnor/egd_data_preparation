@@ -195,12 +195,12 @@ format(Sys.time(), "%H:%M:%S")
 query_ED_all %>%                                             # substep 1: ED
   glue(ii="gk_union", oo="gk_ED", f_id="f32", bd= t_morph/2, ts= t_tol2, ns= n_seg) %>%
   dbExecute(conn= conn_gk) %>%
-  time_pipe(unit= "mins") #  
+  time_pipe(unit= "mins") # ~8 min (Akershus)
 format(Sys.time(), "%H:%M:%S")
 query_DE_all %>%                                             # substep 2: DE
   glue(ii="gk_ED", oo="gk_EDDE", f_id="f32", bd= t_morph/2, ts= t_tol2, ns= n_seg) %>%
   dbExecute(conn= conn_gk) %>%
-  time_pipe(unit= "mins") # 
+  time_pipe(unit= "mins") # ~3 min (Akershus)
 format(Sys.time(), "%H:%M:%S")
 as_duckspatial_df("gk_DE", conn= conn_gk) %>% # export as a geopackage
   ddbs_write_dataset(glue(out_ms1, e_id="e01", f_id= "f32", yr=yr, nn="DEED"), gdal_driver= "GPKG", overwrite= T) %>%  # Akershus
@@ -211,16 +211,16 @@ format(Sys.time(), "%H:%M:%S")
 query_DE_all %>%                                             # substep 1: DE
   glue(ii="gk_union", oo="gk_DE", f_id="f32", bd= t_morph/2, ts= t_tol2, ns= n_seg) %>%
   dbExecute(conn= conn_gk) %>%
-  time_pipe(unit= "mins") #  
+  time_pipe(unit= "mins") # ~15 min (Akershus) 
 format(Sys.time(), "%H:%M:%S")
 query_ED_all %>%                                             # substep 2: ED
   glue(ii="gk_DE", oo="gk_DEED", f_id="f32", bd= t_morph/2, ts= t_tol2, ns= n_seg) %>%
   dbExecute(conn= conn_gk) %>%
-  time_pipe(unit= "mins") # 
+  time_pipe(unit= "mins") # ~7 min (Akershus)
 format(Sys.time(), "%H:%M:%S")
 as_duckspatial_df("gk_DE", conn= conn_gk) %>% # export as a geopackage
   ddbs_write_dataset(glue(out_ms2, e_id="e01", f_id= "f32", yr=yr, nn="DEED"), gdal_driver= "GPKG", overwrite= T) %>%  # Akershus
-  time_pipe() # ~1s
+  time_pipe() # ~ 1s
 
 h_cleanup_db(conn_gk)
 
