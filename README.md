@@ -81,7 +81,9 @@ Here we follow two different "simplification methods":
   slightly "overestimating" in complex mosaic landscapes.
 
 For both methods we applied a dilation/erosion buffer of 10m, which gets rid of every "island" (finger, channel, etc) 
-of the selected ET that narrower than `th_morph = 20`m, and similarly, every "gap" narrower than 20m gets swallowed by the selected ET.
+of the selected ET that narrower than `th_morph = 20`m, and similarly, every "gap" narrower than 20m gets swallowed 
+by the selected ET.
+
 The only difference between the two methods is in the *order* of the dilation and erosion operations. 
 In a coarse-grained landscape with few small gaps and few small islands the two methods will lead to closely the same result, 
 which also closely coincides with the ET boundaries of the level-1 ET map. 
@@ -175,4 +177,5 @@ Here we don't duplicate these descriptions -- we just provide the script for the
 <!--  Sylvie, FWIW, I increasingly think that this .md file is enough for the overall description of this workflow -- 
       i.e. we could do with a simple R script (with simple #-comments, as needed, versioned in git... but no qmd). 
       If you don't mind I will transform the current qmd into such an R script when I add my parts (s1, s2...) to its end. --> 
+
 

@@ -1,5 +1,5 @@
 ---
-title: "Prepare Copernicus High Resolution Layer Imperviousness data"
+title: "Prepare Copernicus High Resolution Layer Tree Cover Density data"
 folderName: code # Leave to be filled out by ecRxiv during typesetting (name of the folder under 'indicators/'). 
 # If it's a single indicator being reported, the folder name should be the same as the indicatorID. 
 # If there are multiple ID's then the folder name could look something like XX_YYY_ZZZ-ÅÅÅ.
@@ -9,7 +9,7 @@ yearAdded: 2026 # the year when the indicator was first submitted to ecRxiv
 yearLastUpdate: 2026
 status: complete # options are complete, incomplete, or deprecated
 Version: "0.1.0" # See wiki page: https://github.com/NINAnor/ecRxiv/wiki#versioning
-VersionComment: 'First version. The code has been adapted from https://github.com/NINAnor/ecRxiv/tree/main/indicators/NO_URGR_001-005. Template adapated from Anders Kolstad ecRxiv repository: https://github.com/NINAnor/ecRxiv.'
+VersionComment: 'First version. The code has been adapted from https://github.com/NINAnor/ecRxiv/tree/main/indicators/NO_TCCD_001_104. Template adapated from Anders Kolstad ecRxiv repository: https://github.com/NINAnor/ecRxiv.'
 url: https://github.com/NINAnor/egd_data_preparation
 # To be filled out by ecRxiv during the typesetting, when they will replace XX_YYYY_ZZ with the name of the root folder for the current indicator(s). It should be the same as the indicatorID, but if there are more indicator IDs presented in the same folder, the folder name might be different, e.g. XX_YYYY_AAA-BBB 
 format: 
@@ -33,7 +33,7 @@ author:
     affiliations:
       - ref: myID               # To reuse affiliations reference the id like this
 AuthorList: Clappe, S., Czúcz, B.
-date: July 13, 2026
+date: August 11, 2026
 callout-icon: false
 lightbox: true
 css: ../../../style.css
@@ -63,10 +63,12 @@ library(dplyr)
 library(terra)
 library(carrier)
 library(mirai)
+library(hdar)
+library(jsonlite)
 library(DBI)
 library(duckspatial)
 library(sf)
-library(hdar)
+library(httr2)
 
 # weird workarounds for cache issues
 conflicts_prefer(dplyr::filter)
@@ -142,8 +144,7 @@ meta |>
 ## Log
 
 <!--# Update this logg with short messages for each update -->
-- 13 July 2026 - First draft version
-- 14 August 2026 - Final draft
+- 11 August 2026 - First draft version
 :::
 
 
@@ -152,51 +153,48 @@ meta |>
 <!--# Document you work below.  -->
 
 ## 1. Summary
-This code shows how to download and pre-process Copernicus High Resolution Layer (HRL) Imperiousness data to compile the URGR indicators from ecRxiv: https://github.com/NINAnor/ecRxiv/tree/main/indicators/NO_URGR_001-005.
+This code shows how to download and pre-process Copernicus High Resolution Layer (HRL) Tree Cover Density (TCD) data to compile the TCCD indicators from ecRxiv: https://github.com/NINAnor/ecRxiv/tree/main/indicators/NO_TCCD_001_104.
 
 
 ## 2. Data characteristics
-
-These data are produced by Copernicus: https://land.copernicus.eu/en/products/high-resolution-layer-imperviousness.
+These data are produced by Copernicus: https://land.copernicus.eu/en/products/high-resolution-layer-forests-and-tree-cover.
 
 ### 2.1 Spatial and temporal resolution and extent
-
-We downloaded the data for the whole on Norway (excluding Svalbård), for the years 2018, 2021, and 2024. Spatial resolution is 10m x 10m.
+We downloaded the data for the whole on Norway (excluding Svalbård), for the years 2018, 2019, 2020, 2021. Spatial resolution is 10m x 10m.
 
 ### 2.2 Sampling design
-The HRL Imperviousness data are generated using state-of-the-art automated image processing 
+The HRL TCD data are generated using state-of-the-art automated image processing 
 methods that are applied to systematically acquired, high-resolution satellite image time series 
-from the Copernicus space segment (i.e. Sentinel-2). See [Algorithm Teoretical Basis Document](https://land.copernicus.eu/en/technical-library/algorithm-theoretical-basis-document-high-resolution-layer-imperviousness-2024/@@download/file).
+from the Copernicus space segment (i.e. Sentinel-2). Layers have been harmonised across time, allowing for time series comparisons. See [Algorithm Teoretical Basis Document](https://library.land.copernicus.eu/products/High_Resolution_Layer_Vegetated_Land_Cover_Characteristics_ATBD_v2.html) and [Product user manual](https://land.copernicus.eu/en/technical-library/product-user-manual-tree-cover-and-forests-2018-present/@@download/file).
 
-There has been significant changes is data processing between 2018, 2021 and 2024. First, 2021 and 2024 layers have been merged with CLC+ BackBone sealed layer. This ensures comparability between the two Copernicus products. Copernicus IMD 2018 however has not be merged with CLC+ BackBone sealed layer. Years 2021 and 2024 have been produced with the same convolutional neural network called U-Net, while the model used for 2018 is not specified in the metadata but is stated as being different. Finally, the threshold of prediction for an imperviousness density to be reported in a pixel was 90% in 2021 but 70% in 2024. This means that care should be taken when using these data for temporal series analyses. To ensure consistency across time, it would have been preferable to use the Imperviousness change layers that are designed to be homogeneous over time, correcting for the different changes in methodology. However, these layers are only available at 20m resolution. Downscaling theses layers to 10m or upscaling the original layers of HRL Imperviousness to 20m would results in additional uncertainties.
 
 ### 2.3 Original units
-The original unit of Copernicus HRL imperviousness is percentages (the share of impervious areas in the pixel)
+The original unit of Copernicus HRL TCD is percentages (the share of tree cover areas in the pixel).
 
 
 ### 2.4 Instructions for citing, using and accessing data
-Openly available[here](https://land.copernicus.eu/en/products/high-resolution-layer-imperviousness/imperviousness-density-2024#download)
+Openly available[here](https://land.copernicus.eu/en/products/high-resolution-layer-forests-and-tree-cover/tree-cover-density-2018-present-raster-10-m-europe-yearly#download)
 
 
 ### 2.5 Additional comments about the dataset
-Other metadata can be found in the [User manual](https://land.copernicus.eu/en/technical-library/product-user-manual-high-resolution-layer-imperviousness-2024/@@download/file)
+Other metadata can be found in the [Product user manual](https://land.copernicus.eu/en/technical-library/product-user-manual-tree-cover-and-forests-2018-present/@@download/file)
 
 
 ## 3. Uncertainties
 ### 3.1 General uncertainties
-Uncertainties have several sources all taking roots in the modelling used to process the Sentinel-d raw data. They can come from the pre-processing of the raw data necessary to correct the images (e.g., radiometrical/sensor calibration; geophysical corrections; cloud cover corrections;creation of the mosaic). But they also arise when the pre-processed data are classified through machine learning to produce the final layer of imperviousness. Classification is never definitive and produces probabilities for a pixel to belong to a specific class. In addition, there has been significant methodology changes between the 3 years downloaded: 2018, 2021, and 2024. Care should be taken when comparing imperviousness across years.
+Uncertainties have several sources all taking roots in the modelling used to process the Sentinel-2 raw data. They can come from the pre-processing of the raw data necessary to correct the images (e.g., radiometrical/sensor calibration; geophysical corrections; cloud cover corrections;creation of the mosaic). But they also arise when the pre-processed data are classified through machine learning to produce the final layer of imperviousness. Classification is never definitive and produces probabilities for a pixel to belong to a specific class. 
 
 ### 3.2 Reported uncertainties
-Copernicus reported "Confidence layers" for each of the Imperviousness datasets. In their technical guide, they explain that, to compile this indicator of uncertainty, the U-Net classification model is applied multiple times using different models from nearby tiles. The resulting standard deviation of the predictions is used as an indicator for the classification of confidence per pixel.
+Copernicus reported "Confidence layers" for each of the TCD datasets. In their technical guide, they explain that, they report the "Total Uncertainty" which is defined as the sum of data and knowledge uncertainty. "data uncertainty" is a measure for the data complexity due to noise or overlapping classes. While "knowledge uncertainty" is obtained through the CatBoost algorithm by using virtual ensembles. Basically, CatBoost runs on several data ensembles and compiles the mean value. The "Knowledge uncertainty" is then the variance of the all the means compiled.
 
-The confidence values are pixel-based and range from 0 to 100. In practice only values 50-100 are used as values below 50% would indicate a higher confidence in the opposite class. The recommended interpretation state that pixels with values ranging 75-100 are of high confidence, 50-75 of moderate confidence, and below 50 of low confidence.
+The confidence values are pixel-based and range from 0 to 100. In practice, what is measure is the standard deviation to TCD estimate. So for the uncertainty to be low, the standard deviation needs to be low.
 
-The confidence layers were only available for 2021 and 2024.
+The confidence layers are available for all years.
 
 
 ## 4. Data download
 
-### 4.1 Copernicus IMD
+### 4.1 Copernicus TCD
 Tree canopy cover density layers can be downloaded from Copernicus for the years 2018 to 2023. This can be done using an API query through the [WEkEO website](https://help.wekeo.eu/en/articles/6416936-how-to-download-wekeo-data#h_4d7de19c7c) and the `hda` R package. A detailed tutorial can be found [here](https://help.wekeo.eu/en/articles/7035318-how-to-use-the-hdar-package-for-accessing-the-wekeo-hda-api-in-r).Note that the request through API requires the username and password from the WEkEO website so you nee dto create an account. The API query uses a bounding box but it is quite large, resulting in heavy rasters. That is why a subsequent step of cleaning has been done to mask the cells that were not in Norway, hence decreasing the size of the rasters. These processed rasters are the ones we made available on the internal NINA repository.
 
 *!Attention: this code, writes the rasters on the disk of the users.*
@@ -234,21 +232,29 @@ Now we can create the API query. It can be automatically created for you using t
 # Create API queries
 # Note: use the WEkEO Data viewer that will create an automatic API
 # Note: Use "SetAOI" to set your bounding box
-yrs <- seq(2021, 2024, 3)
+yrs <- list(c("2022-01-01T00:00:00.000Z", 
+              "2022-12-31T00:00:00.000Z"),
+            c("2023-01-01T00:00:00.000Z", 
+              "2023-12-31T00:00:00.000Z"),
+            c("2024-01-01T00:00:00.000Z", 
+              "2024-12-31T00:00:00.000Z"))
 
 api_list <- map(seq_along(yrs), function(i){
   paste0('{
-  "dataset_id": "EO:EEA:DAT:HRL:IMP",
+  "dataset_id": "EO:JRC:DAT:CLMS",
   "bbox": [
-    4.035020512779106,
-    57.619913920878176,
-    32.10650033269319,
-    71.32500159191206
+    4.035020510000001,
+    57.61991392,
+    32.10650033,
+    71.32500159
   ],
-  "productType": "Imperviousness Density",
-  "resolution": "10m",
-  "year": "', yrs[i],
+  "startdate": "',
+  yrs[[i]][1],
+  '", 
+  "enddate": "', 
+  yrs[[i]][2],
   '",
+  "datasetIdentifier": "clms_vlcc_tree-cover-density_europe_10m_yearly_v1",
   "itemsPerPage": 200,
   "startIndex": 0
 }')}
@@ -264,7 +270,7 @@ We use the API query to search and download the data sets of relevance.
 
 # Search the datasets
 matches <- map(seq_along(api_list), ~ client$search(api_list[.x]))
-names(matches) <- yrs
+names(matches) <- c("2022", "2023", "2024")
 
 # ID of all the datasets to download
 data_id <- map(matches, function(yr) {
@@ -272,7 +278,7 @@ data_id <- map(matches, function(yr) {
 })
 
 # Set up the output directory
-output_directory <- paste0(str_remove(tempdir(), "Rtmp\\w*"), "IMD_Copernicus")
+output_directory <- paste0(str_remove(tempdir(), "Rtmp\\w*"), "TCD_Copernicus")
 
 # Download - co-written by Sylvie Clappe and Jennifer Hansen
 walk(matches, function(yr) {
@@ -284,7 +290,7 @@ walk(matches, function(yr) {
   message(
     sprintf(
       "Downloading %s %d/%d: %s",
-      str_extract(product_id, "(?<=IMD_S).{4}"),
+      str_extract(product_id, "(?<=TCD_S).{4}"),
       i,
       yr$total_count,
       product_id
@@ -314,7 +320,6 @@ rm(list = setdiff(ls(),
 
 ```
 
-
 ### 4.2 Copernicus IMD Confidence layers
 Now we do the same for the confidence layers.
 
@@ -325,21 +330,37 @@ Now we do the same for the confidence layers.
 # Create API queries
 # Note: use the WEkEO Data viewer that will create an automatic API
 # Note: Use "SetAOI" to set your bounding box
-yrs <- seq(2021, 2024, 3)
+yrs <- list(c("2018-01-01T00:00:00.000Z", 
+              "2018-12-31T00:00:00.000Z"),
+            c("2019-01-01T00:00:00.000Z", 
+              "2019-12-31T00:00:00.000Z"),
+            c("2020-01-01T00:00:00.000Z", 
+              "2020-12-31T00:00:00.000Z"),
+            c("2021-01-01T00:00:00.000Z", 
+              "2021-12-31T00:00:00.000Z"),
+            c("2022-01-01T00:00:00.000Z", 
+              "2022-12-31T00:00:00.000Z"),
+            c("2023-01-01T00:00:00.000Z", 
+              "2023-12-31T00:00:00.000Z"),
+            c("2024-01-01T00:00:00.000Z", 
+              "2024-12-31T00:00:00.000Z"))
 
 api_list <- map(seq_along(yrs), function(i){
   paste0('{
-  "dataset_id": "EO:EEA:DAT:HRL:IMP",
+  "dataset_id": "EO:JRC:DAT:CLMS",
   "bbox": [
-    4.035020512779106,
-    57.619913920878176,
-    32.10650033269319,
-    71.32500159191206
+    4.035020510000001,
+    57.61991392,
+    32.10650033,
+    71.32500159
   ],
-  "productType": "Confidence layer for Imperviousness Density",
-  "resolution": "10m",
-  "year": "', yrs[i],
+  "startdate": "',
+  yrs[[i]][1],
+  '", 
+  "enddate": "', 
+  yrs[[i]][2],
   '",
+  "datasetIdentifier": "clms_vlcc_tree-cover-density-confidence-layer_europe_10m_yearly_v1",
   "itemsPerPage": 200,
   "startIndex": 0
 }')}
@@ -348,14 +369,13 @@ api_list <- map(seq_along(yrs), function(i){
 
 ```
 
-
 ```{r}
 #| eval: false
 #| code-summary: "Search and dowload the data corresponding to the API query"
 
 # Search the datasets
 matches <- map(seq_along(api_list), ~ client$search(api_list[.x]))
-names(matches) <- yrs
+names(matches) <- as.character(seq(2018, 2024, 1))
 
 # ID of all the datasets to download
 data_id <- map(matches, function(yr) {
@@ -363,7 +383,7 @@ data_id <- map(matches, function(yr) {
 })
 
 # Set up the output directory
-output_directory <- paste0(str_remove(tempdir(), "Rtmp\\w*"), "IMD_Copernicus_confidence")
+output_directory <- paste0(str_remove(tempdir(), "Rtmp\\w*"), "TCD_Copernicus_confidence")
 
 # Download - co-written by Sylvie Clappe and Jennifer Hansen
 walk(matches, function(yr) {
@@ -375,7 +395,7 @@ walk(matches, function(yr) {
   message(
     sprintf(
       "Downloading %s %d/%d: %s",
-      str_extract(product_id, "(?<=IMDCL_S).{4}"),
+      str_extract(product_id, "(?<=TCDCL_S).{4}"),
       i,
       yr$total_count,
       product_id
@@ -398,15 +418,16 @@ walk(matches, function(yr) {
 })
 
 # Clean R environment
-rm(list = ls())
+rm(list = setdiff(ls(), 
+                  c("pull")))
 
 
 ```
 
-
 ## 5. Data cleaning and formatting
+Once the rasters (.tf) have been extracted and written on the disk, they can be read to create a virtual raster that will be used for the subsequent analyses later on.
 
-### 5.1 Copernicus IMD
+### 5.1 Copernicus TCD
 All the data have been downloaded as `.zip`. We are now going to unzip them. While we do it, we perform additional cleaning and formatting steps. Norway bounding box for which we downloaded the data is quite wide and include a lot of rasters that are in Sweden and Finland, while not overlapping Norway. We apply a mask for Norway to select the relevant rasters. For this we use the administrative boundaries from Geonorge. We also re-classify the raster value of 255 as NaN.
 
 First, we create a mask of Norway.
@@ -418,46 +439,49 @@ First, we create a mask of Norway.
 source(here::here("src", "functions", "api_geonorge.R"))
 
 # Open duckdb connection
-conn_imd <- ddbs_create_conn(dbidr = "tempdir", threads = 5, memory_limit_gb = 10)
+conn_tcd <- ddbs_create_conn(dbidr = "tempdir", threads = 5, memory_limit_gb = 10)
 
 # Download data in tempdir
 no_data_path <- api_geonorge("https://nedlasting.geonorge.no/api/capabilities/041f1e6e-bdbc-4091-b48f-8a5990f3cc5b", 
-                            "john.doe@email.no")
+                            "john.doe@email.no") # be careful, it seems that the rank of formats available changes all the so the function needs to be adapted
 
-st_layers(no_data_path)
+# Name of the layer, geom column and CRS
+layers <- st_layers(no_data_path)
+layers <- layers$name
+
+db_colnames <- dbGetQuery(conn_tcd, sprintf("DESCRIBE SELECT * FROM ST_Read('%s', layer = '%s')", no_data_path, layers))
+geom_name <- db_colnames$column_name[grepl("GEOMETRY", db_colnames$column_type)]
+
+
 
 # Read, transform, union and write 
-dbExecute(conn_imd, 
-            sprintf("
-              CREATE OR REPLACE TABLE '%s' AS
-              SELECT ST_Transform(
-             ST_Union_Agg(ST_MakeValid(SHAPE)),
-             'EPSG:25833',
-             'EPSG:3035',
-             always_xy := true) AS geometry
-              FROM ST_Read('%s', layer = '%s')
-            ", 
+dbExecute(conn_tcd, 
+            sprintf('
+              CREATE OR REPLACE TABLE "%s" AS
+              SELECT ST_Union_Agg(ST_MakeValid("%s")) AS geometry
+              FROM ST_Read("%s", layer = "%s")
+            ', 
       "norway_bd",
+      geom_name,
       no_data_path,
-      "kommune"))
+      layers))
 
 # Extract dataset
-norway_mask <- as_duckspatial_df("norway_bd", conn = conn_imd) %>%
-                ddbs_collect() %>%
-                st_set_crs(3035) # duckdb doesn't track the change of the CRS in the database so needs to be done manually
+norway_mask <- as_duckspatial_df("norway_bd", conn = conn_tcd) %>%
+                ddbs_collect() 
 
 # Verify tables are in my duckdb conn_pm database
-ddbs_stop_conn(conn_imd)
+ddbs_stop_conn(conn_tcd)
 
 # Clean the R environment
 rm(list = setdiff(ls(), 
                   c("pull",
-                    "output_directory",
                     "norway_mask")))
 
 ```
 
 Now that the mask is ready, we can unzip the files and clean the rasters.
+
 ```{r}
 #| eval: false
 #| code-summary: "Read the .tif from a zip file"
@@ -467,25 +491,25 @@ source(here::here("src", "functions", "list_zip_files.R"))
 source(here::here("src", "functions", "extract_zip_files.R"))
 
 # Set up the output directory
-output_directory <- paste0(str_remove(tempdir(), "Rtmp\\w*"), "IMD_Copernicus")
+output_directory <- paste0(str_remove(tempdir(), "Rtmp\\w*"), "TCD_Copernicus")
 
 # List datasets' paths to read and their names
-files_imd_read <- files_list_one_fn(output_directory)
+files_tcd_read <- files_list_one_fn(output_directory)
 
 # List datasets path (here we remove the zip marker and the name of the file)
-files_imd_write <- str_remove(files_imd_read[[1]], "CLMS.*") %>%
+files_tcd_write <- str_remove(files_tcd_read[[1]], "CLMS.*") %>%
                       str_remove("/vsizip/\\{")
 
 # Run the function to read and write the rasters from the zip files directly
 daemons(10)
-map(seq_along(files_imd_read[[1]]),
-    in_parallel( ~process_raster_fn(path_read = files_imd_read[[1]][.x],
-                                    path_write = files_imd_write[.x],
-                                    files_names = files_imd_read[[2]][.x],
+map(seq_along(files_tcd_read[[1]]),
+    in_parallel( ~process_raster_fn(path_read = files_tcd_read[[1]][.x],
+                                    path_write = files_tcd_write[.x],
+                                    files_names = files_tcd_read[[2]][.x],
                                     geo_mask = norway_mask),
                  process_raster_fn = process_raster_fn,
-                 files_imd_read = files_imd_read,
-                 files_imd_write = files_imd_write,
+                 files_tcd_read = files_tcd_read,
+                 files_tcd_write = files_tcd_write,
                  norway_mask = norway_mask
     )
 )
@@ -500,54 +524,52 @@ rm(list = setdiff(ls(),
 
 ```
 
-
 We now create a virtual raster that we will read and export as a raster for future analyses. These rasters are not heavy (<2GB each).
 
 ```{r}
 #| eval: false
-#| code-summary: "Create Copernicus IMD virtual rasters and export them as rasters"
+#| code-summary: "Create Copernicus TCD virtual rasters and export them as rasters"
 
 ## Code co-created by Sylvie Clappe and Jennifer Hansen
 
-## Create the IMD virtual rasters
-file_imd_list <- dir(output_directory, recursive = FALSE, pattern = ".tif$", full.names = TRUE)
-yrs_imd <- str_extract(file_imd_list, "(?<=IMD_S).{4}") %>%
+## Create the TCD virtual rasters
+file_tcd_list <- dir(output_directory, recursive = FALSE, pattern = ".tif$", full.names = TRUE)
+yrs_tcd <- str_extract(file_tcd_list, "(?<=TCD_S).{4}") %>%
               unique()
 
-file_imd <- map_vec(seq_along(yrs_imd), function(i){paste0(output_directory, "/IMD_", yrs_imd[i], ".vrt")})
+file_tcd <- map_vec(seq_along(yrs_tcd), function(i){paste0(output_directory, "/TCD_", yrs_tcd[i], ".vrt")})
 
-walk(seq_along(file_imd), function(x){
+walk(seq_along(file_tcd), function(x){
   
   # Select relevant .tif
-    file_imd_list[grepl(yrs_imd[x], file_imd_list, ignore.case = TRUE)] %>%
+    file_tcd_list[grepl(yrs_tcd[x], file_tcd_list, ignore.case = TRUE)] %>%
     
   # Create virtual raster
-    vrt(filename= file_imd[x]) } )
+    vrt(filename= file_tcd[x]) } )
                
         
 ## Read .vrt files
-rast_list <- map(seq_along(file_imd),
-                 ~rast(file_imd[.x]))
+rast_list <- map(seq_along(file_tcd),
+                 ~rast(file_tcd[.x]))
 
-## Create levels (none in the original datset)
-levels_original <- data.frame(value = c(seq(0, 100), 255),
-                              class_name = c(paste0(0:100, "% imperviousness"),
-                              "outside area reclassified as NAs"))
+## Add levels 
+levels_original <- levels(rast(file_tcd_list[1]))
+levels_original[[1]]$class_name[levels_original[[1]]$class_name == "outside area"] <- "outside area reclassified as NAs"
 
 rast_list <- map(rast_list,
                  ~{levels(.x) <- levels_original
                  return(.x)})
 
 ## Export new rasters
-walk(seq_along(file_imd),
-     ~writeRaster(rast_list[[.x]], filename = paste0(output_directory, "/IMD_", yrs_imd[.x], ".tif")))
+walk(seq_along(file_tcd),
+     ~writeRaster(rast_list[[.x]], filename = paste0(output_directory, "/TCD_", yrs_tcd[.x], ".tif")))
 
-## Clean R Environment
 rm(list = setdiff(ls(), 
                   c("pull",
                     "norway_mask")))
 
 ```
+
 
 ### 5.2 Copernicus IMD Confidence layers
 ```{r}
@@ -559,25 +581,25 @@ source(here::here("src", "functions", "list_zip_files.R"))
 source(here::here("src", "functions", "extract_zip_files.R"))
 
 # Set up the output directory
-output_directory <- paste0(str_remove(tempdir(), "Rtmp\\w*"), "IMD_Copernicus_confidence")
+output_directory <- paste0(str_remove(tempdir(), "Rtmp\\w*"), "TCD_Copernicus_confidence")
 
 # List datasets' paths to read and their names
-files_imd_read <- files_list_one_fn(output_directory)
+files_tcd_read <- files_list_one_fn(output_directory)
 
 # List datasets path (here we remove the zip marker and the name of the file)
-files_imd_write <- str_remove(files_imd_read[[1]], "CLMS.*") %>%
+files_tcd_write <- str_remove(files_tcd_read[[1]], "CLMS.*") %>%
                       str_remove("/vsizip/\\{")
 
 # Run the function to read and write the rasters from the zip files directly
 daemons(10)
-map(seq_along(files_imd_read[[1]]),
-    in_parallel( ~process_raster_fn(path_read = files_imd_read[[1]][.x],
-                                    path_write = files_imd_write[.x],
-                                    files_names = files_imd_read[[2]][.x],
+map(seq_along(files_tcd_read[[1]]),
+    in_parallel( ~process_raster_fn(path_read = files_tcd_read[[1]][.x],
+                                    path_write = files_tcd_write[.x],
+                                    files_names = files_tcd_read[[2]][.x],
                                     geo_mask = norway_mask),
                  process_raster_fn = process_raster_fn,
-                 files_imd_read = files_imd_read,
-                 files_imd_write = files_imd_write,
+                 files_tcd_read = files_tcd_read,
+                 files_tcd_write = files_tcd_write,
                  norway_mask = norway_mask
     )
 )
@@ -598,40 +620,36 @@ rm(list = setdiff(ls(),
 ## Code co-created by Sylvie Clappe and Jennifer Hansen
 
 ## Create the IMD virtual rasters
-file_imd_list <- dir(output_directory, recursive = FALSE, pattern = ".tif$", full.names = TRUE)
-yrs_imd <- str_extract(file_imd_list, "(?<=IMDCL_S).{4}") %>%
+file_tcd_list <- dir(output_directory, recursive = FALSE, pattern = ".tif$", full.names = TRUE)
+yrs_tcd <- str_extract(file_tcd_list, "(?<=TCDCL_S).{4}") %>%
               unique()
 
-file_imd <- map_vec(seq_along(yrs_imd), function(i){paste0(output_directory, "/IMDCL_", yrs_imd[i], ".vrt")})
+file_tcd <- map_vec(seq_along(yrs_tcd), function(i){paste0(output_directory, "/TCDCL_", yrs_tcd[i], ".vrt")})
 
-walk(seq_along(file_imd), function(x){
+walk(seq_along(file_tcd), function(x){
   
   # Select relevant .tif
-    file_imd_list[grepl(yrs_imd[x], file_imd_list, ignore.case = TRUE)] %>%
+    file_tcd_list[grepl(yrs_tcd[x], file_tcd_list, ignore.case = TRUE)] %>%
     
   # Create virtual raster
-    vrt(filename= file_imd[x]) } )
+    vrt(filename= file_tcd[x]) } )
                
         
 ## Read .vrt files
-rast_list <- map(seq_along(file_imd),
-                 ~rast(file_imd[.x]))
+rast_list <- map(seq_along(file_tcd),
+                 ~rast(file_tcd[.x]))
 
-## Create levels (none in the original datset)
-levels_original <- data.frame(value = c(seq(0, 100), 255),
-                              class_name = c(paste0(0:100, "% confidence"),
-                              "outside area reclassified as NAs"))
+## Add levels 
+levels_original <- levels(rast(file_tcd_list[1]))
+levels_original[[1]]$class_name[levels_original[[1]]$class_name == "outside area"] <- "outside area reclassified as NAs"
 
 rast_list <- map(rast_list,
                  ~{levels(.x) <- levels_original
                  return(.x)})
 
 ## Export new rasters
-walk(seq_along(file_imd),
-     ~writeRaster(rast_list[[.x]], filename = paste0(output_directory, "/IMDCL_", yrs_imd[.x], ".tif")))
-
-## Clean R Environment
-rm(list = ls())
+walk(seq_along(file_tcd),
+     ~writeRaster(rast_list[[.x]], filename = paste0(output_directory, "/TCDCL_", yrs_tcd[.x], ".tif")))
 
 ```
 
@@ -639,6 +657,7 @@ rm(list = ls())
 Virtual raster already exported in the previous code.
 
 ## 7. Author contributions
+
 
 **CRediT statement**
 

@@ -15,10 +15,10 @@
 #' @examples
 
 # Code co-created by Sylvie Clappe and Jennifer Hansen
-ddbs_read_and_transform_gk <- function(data_path_gdb, conn_name, crs_proj){
+ddbs_read_and_transform_gk <- function(data_path_gdb, conn_name, crs_proj = NULL){
   
   # Tile name
-  tile_name <- paste0("tile_", str_extract(data_path_gdb, "(?<=format/).{2}"))
+  tile_name <- paste0("f", str_extract(data_path_gdb, "(?<=format/).{2}"))
   
   # Tile CRS
   tile_crs <- st_read(data_path_gdb, query = "SELECT * FROM arealregnskap LIMIT 10") %>%
@@ -32,29 +32,37 @@ ddbs_read_and_transform_gk <- function(data_path_gdb, conn_name, crs_proj){
     mutate(tile_name = tile_name)
   
   # Re-project if tile is not in the CRS of interest
-  if (!identical(tile_crs$wkt, crs_proj$wkt)) {
-    ddbs_sd <- ddbs_sd %>% 
-      ddbs_transform(y = gk_crs,
-                     conn = conn_name)
+  if(is_null(crs_proj) == FALSE){
+    if (!identical(tile_crs$wkt, crs_proj$wkt)) {
+      ddbs_sd <- ddbs_sd %>% 
+        ddbs_transform(y = gk_crs,
+                       conn = conn_name)
+    }
   }
+  
+  # Select columns of interest
+  ddbs_sd <- ddbs_sd %>%
+    select(tile_name, id, okosystemtype_1, areal_m2, geo)
   
   # Write a new database
-  if (!DBI::dbExistsTable(conn_name, "grunnkart_raw")) {
-    
-    # First tile: create the table
-    ddbs_sd %>% 
-      ddbs_write_table(conn = conn_name, name = "grunnkart_raw")
-    
-  } else {
-    
-    # Subsequent tiles: append
-    rows_append(
-      tbl(conn_name, "grunnkart_raw"),
-      ddbs_sd,
-      in_place = TRUE
-    )
-  }
+  ddbs_write_table(ddbs_sd, conn = conn_name, name = paste0("grunnkart_raw_", tile_name))
   
-  ddbs_sd %>%
-  select(tile_name, id, okosystemtype_1, areal_m2, geo)
+  
+  # if (!DBI::dbExistsTable(conn_name, "grunnkart_raw")) {
+  #   
+  #   # First tile: create the table
+  #   ddbs_sd %>% 
+  #     ddbs_write_table(conn = conn_name, name = "grunnkart_raw")
+  #   
+  # } else {
+  #   
+  #   # Subsequent tiles: append
+  #   rows_append(
+  #     tbl(conn_name, "grunnkart_raw"),
+  #     ddbs_sd,
+  #     in_place = TRUE
+  #   )
+  # }
+  
+  
 }
