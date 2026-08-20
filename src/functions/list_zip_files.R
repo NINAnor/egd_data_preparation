@@ -22,7 +22,14 @@ files_list_one_fn <- function(path){
   zip_files <- list.files(path, pattern = "\\.zip$", 
                           full.names = TRUE)
   
-  files_to_read <- map_vec(seq_along(zip_files), function(i){paste0("/vsizip/{", zip_files[i], "}/", files_names[i], ".tif")})
+  files_to_read <- map_vec(seq_along(zip_files), function(i){
+    
+    # List the content of a zipfile and extract internal path
+    content <- utils::unzip(zip_files[i], list = TRUE)
+    tif_internal_path <- content$Name[grepl("\\.tif$", content$Name, ignore.case = TRUE)]
+    
+    # Build unzipping with GDAL
+    paste0("/vsizip/{", zip_files[i], "}/", tif_internal_path)})
   
   return(list(files_to_read, files_names))
 }
@@ -38,7 +45,14 @@ files_list_sev_fn <- function(path){
   
   zip_files <- dir(path, recursive = TRUE, full.names = TRUE, pattern="\\.zip$")
   
-  files_to_read <- map_vec(seq_along(zip_files), function(i){paste0("/vsizip/{", zip_files[i], "}/", files_names[i], ".tif")})
+  files_to_read <- map_vec(seq_along(zip_files), function(i){
+    
+    # List the content of a zipfile and extract internal path
+    content <- utils::unzip(zip_files[i], list = TRUE)
+    tif_internal_path <- content$Name[grepl("\\.tif$", content$Name, ignore.case = TRUE)]
+    
+    # Build unzipping with GDAL
+    paste0("/vsizip/{", zip_files[i], "}/", tif_internal_path)})
   
   return(list(files_to_read, files_names))
 }

@@ -202,7 +202,7 @@ pm25_path <- "/data/P-Prosjekter2/412413_2023_no_egd/git_data/PM2.5/National"
 
 ```
 
-We have nine rasters to load, we first create a list of files before reading them and storing them in a list object. *Note: the CRS of the layers could not be identified precisely by R "unnamed". After contacting the data provider, we had the confirmation that the CRS was EPSG:32633*
+We have nine rasters to load, we first create a list of files before reading them and storing them in a list object. *Note: the CRS of the layers could not be identified precisely by R "unnamed". After contacting the data provider, we had the confirmation that the CRS was EPSG:25833*
 
 ```{r}
 #| eval: false
@@ -215,7 +215,7 @@ pm25_files <- list.files(pm25_path, pattern = ".nc$",
 pm25_data <- pm25_files %>% 
                  map(\(.) rast(.)) %>%
                  map(., ~ {
-                   crs(.x) <- "EPSG:32633"
+                   crs(.x) <- "EPSG:25833"
                    .x
                    })
 

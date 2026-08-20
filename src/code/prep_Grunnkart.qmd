@@ -190,7 +190,7 @@ Prior testing revealed that `sf` package is less performant to correct geometric
 
 *Note: `duckspatial` creates a duckdb database to store the data. This can become heavy very easily so the solution is to either make sure to have space on the disk, or clean the intermediate product along the way, which is what we do in this code.*
 
-The first step is to open a connection to DuckDB. We advise to do it on a temporary file that will be deleted later on. We limit the threads (i.e. cores) to 10 and the memory to 30GB.
+The first step is to open a connection to DuckDB. We advise to do it on a temporary file that will be deleted later on. We limit the threads (i.e. cores) to 10 and the memory to 30GB. This database can become quite heavy with data, that is why we clean it along the different cleaning steps to only keep the relevant data.
 ```{r}
 #| eval: false
 #| code-summary: "Create a DuckDB connection"
@@ -199,7 +199,7 @@ target_crs <- 25832 # BC: this should be 25833
 
 ```
 
-Now we can read the data and write them on our temporary DuckDB database. We re-project on the fly to EPSG:25832 if necessary. This process takes a bit of time due to the size of the data (~10mins).
+Now we can read the data and write them on our temporary DuckDB database: one table per fylke. As we will do all the operations per fylke, we do not re-project and keep the original GK CRS for now. At the Export section, we will produce several geopackages with different projections. This process takes a bit of time due to the size of the data (~10mins).
 ```{r}
 #| eval: false
 #| code-summary: "Read the sf objects from gdb"
@@ -211,25 +211,33 @@ gdb_folder <- "/data/R/GeoSpatialData/LandUse/Norway_Arealregnskap/Original/Grun
 gdb_files <- list.files(gdb_folder, pattern = "_gdb\\.gdb$", 
                         full.names = TRUE)
 
-
-# Main CRS - EPSG:25832
-gk_crs <- st_read(gdb_files[1], 
-                  query = "SELECT * FROM arealregnskap LIMIT 10") %>%
-  st_crs()
-
-# # Remove grunnkart_raw dataset if aleardy in my db connection
-# dbExecute(conn_gk, "DROP TABLE IF EXISTS grunnkart_raw")
-
 # Read
 source(here::here("src", "functions", "ddbs_read_and_transform_gk.R"))
 
 db_gk <- gdb_files %>%
   walk( ~ddbs_read_and_transform_gk(data_path_gdb = .,
-                                    conn_name = conn_gk,
-                                    crs_proj = gk_crs))
+                                    conn_name = conn_gk))
 
-# Verify table is in my duckdb conn_gk database
+# Verify tables are in my duckdb conn_gk database
 ddbs_list_tables(conn_gk)
+
+# Clean duckdb database
+tables <- dbListTables(conn_gk) %>% 
+            keep(., startsWith(., "temp_"))
+
+for (tbl in tables) {
+
+  if(substr(tbl, 1, 9) == "temp_view"){
+
+    dbExecute(conn_gk, sprintf("DROP VIEW IF EXISTS %s", dbQuoteIdentifier(conn_gk, tbl)))
+
+  }else{
+
+    dbExecute(conn_gk, sprintf("DROP TABLE IF EXISTS %s", dbQuoteIdentifier(conn_gk, tbl)))
+
+  }
+
+}
 
 ```
 
@@ -239,15 +247,20 @@ Now that we the raw data are written in the DuckDB database we established, we c
 ## 5. Data cleaning and formatting
 *Note: DuckDB automatically paralellise code within the cores and memory limits we set.*
 
-First we clean the slivers before re-projecting. We set polygons with an area less than 0.05m2 as slivers.
+First we clean the slivers before correcting for geometrical issues. We set polygons with an area less than 0.05m2 as slivers.
 ```{r}
 #| eval: false
 #| code-summary: "Clean slivers"
 
 # recalculate areas and remove slivers
-db_gk_sliver_cln <- ddbs_area("grunnkart_raw", new_column = "area_m2_proj", conn = conn_gk, overwrite = TRUE) %>%
-                      filter(area_m2_proj > 0.05) 
+tables <- dbListTables(conn_gk) %>% 
+            keep(., startsWith(., "grunnkart_raw"))
 
+db_gk_sliver_cln <- map(tables,
+                         ~ filter(as_duckspatial_df(.x, conn = conn_gk),
+                                  areal_m2 > 0.05))
+
+names(db_gk_sliver_cln) <- str_extract(tables, "(?<=_f).{2}")
 
 # # Checks (if needed)
 # gk <- ddbs_read_table(conn_gk, "grunnkart_raw")
@@ -264,88 +277,125 @@ rm(list = setdiff(ls(), c("conn_gk",
 ```
 
 Now we can fix geometry. 
-
 ```{r}
 #| eval: false
 #| code-summary: "Fix geometry issues"
 
 # Fix issues and write the table in the database
-ddbs_make_valid("grunnkart_raw",  
-
-    ### !!! Sylvie, I think that here you start out from the original "grunkkart_raw" table, not from the de-slivered one -- pls check!
-
+map(1:length(db_gk_sliver_cln), function(x){
+  ddbs_make_valid(db_gk_sliver_cln[[x]],
                 conn = conn_gk,
-                "grunnkart_valid", # checkpoint - create a data table in duckdb database
+                name = paste0("grunnkart_valid_", names(db_gk_sliver_cln)[x]), 
                 overwrite = TRUE)
+}
+)
 
 # Verify table is in my duckdb conn_gk database
 ddbs_list_tables(conn_gk)
 
-# Checks - should all disply 0 rows
-valid_check <- ddbs_is_valid("grunnkart_valid",
-                             conn = conn_gk) %>%
-                  filter(!is_valid) %>% # same as is_valid == FALSE
-                  ddbs_collect() %>%
-                  dim()
+# Checks - should all display 0 rows
+tables <- dbListTables(conn_gk) %>%
+            keep(., startsWith(., "grunnkart_valid_"))
 
-empty_check <- ddbs_is_empty("grunnkart_valid",
-                             conn = conn_gk) %>%
-                  filter(is_empty == TRUE) %>%
-                  ddbs_collect() %>%
-                  dim()
+for(tbl in tables){
+  
+  message("Processing: ", tbl)
+  
+  # Checks
+  valid_check <- ddbs_is_valid(tbl, conn = conn_gk) %>%
+                    filter(!is_valid) %>%
+                    ddbs_collect() %>%
+                    dim()
 
-simple_check <- ddbs_is_simple("grunnkart_valid",
-                               conn = conn_gk) %>%
-                  filter(!is_simple) %>% # same as is_simple == FALSE
-                  ddbs_collect() %>%
-                  dim()
+  empty_check <- ddbs_is_empty(tbl, conn = conn_gk) %>%
+                    filter(is_empty == TRUE) %>%
+                    ddbs_collect() %>%
+                    dim()
 
-# Re-calculate areas
-gk_valid <- ddbs_area("grunnkart_valid", new_column = "area_m2_valid", conn = conn_gk, overwrite = TRUE) %>%
-                      select(tile_name, komid, okosystemtype_1, area_m2_valid, geo)
+  simple_check <- ddbs_is_simple(tbl, conn = conn_gk) %>%
+                    filter(!is_simple) %>%
+                    ddbs_collect() %>%
+                    dim()
+  
+  # Print - should all have 0 rows
+  print(valid_check)
+  print(empty_check)
+  print(simple_check)
+
+  
+}
+
+# Clean duckdb database
+tables <- dbListTables(conn_gk) %>% 
+            keep(., startsWith(., "temp_") | startsWith(., "grunnkart_raw"))
+
+for (tbl in tables) {
+
+  if(substr(tbl, 1, 9) == "temp_view"){
+
+    dbExecute(conn_gk, sprintf("DROP VIEW IF EXISTS %s", dbQuoteIdentifier(conn_gk, tbl)))
+
+  }else{
+
+    dbExecute(conn_gk, sprintf("DROP TABLE IF EXISTS %s", dbQuoteIdentifier(conn_gk, tbl)))
+
+  }
+
+}
 
 # Clean checks R Environment
-rm(valid_check,
-   empty_check,
-   simple_check)
+rm(list = setdiff(ls(), c("conn_gk",
+                          "pull")))
 
 
 ```
 
 
-Now we can export this intermediate product, to have one data saved in case the union crashes later. We also clean the duckdb database.
+Now we can export this intermediate product, to have one data saved in case the union crashes later.
 ```{r}
 #| eval: false
 #| code-summary: "Fix geometry errors"
 
-# Export the intermediate product
-ddbs_write_dataset(gk_valid,
-                   path = paste0(str_remove(tempdir(), "Rtmp\\w*"), "GK_raw/GK_valid_db_30JULY2026.gpkg"),
-                   gdal_driver = "GPKG",
-                   conn = conn_gk,
-                   crs = "EPSG:25832",
-                   overwrite = TRUE,
-                   layer = "gk_valid")
+## Export the intermediate product
 
-# Clean duckdb databse
+# Path
+path_gpkg <- paste0(str_remove(tempdir(), "Rtmp\\w*"), "GK_raw/GK_valid_14AUG2026.gpkg")
+
+# Names of the fylke
 tables <- dbListTables(conn_gk)
-tbl_list <- tables[!tables %in% "grunnkart_valid"]
-            
-for (tbl in tbl_list) {
-  
-  if(substr(tbl, 1, 9) == "temp_view"){
-    
-    dbExecute(conn_gk, sprintf("DROP VIEW IF EXISTS %s", dbQuoteIdentifier(conn_gk, tbl)))
-    
-  }else{
-    
-    dbExecute(conn_gk, sprintf("DROP TABLE IF EXISTS %s", dbQuoteIdentifier(conn_gk, tbl)))
-  }
-  
-}
+fylke_nb <- str_extract(tables, "(?<=valid_).{2}") %>%
+              paste0("f", .)
 
-# Verify grunnkart_valid remains
-ddbs_list_tables(conn_gk)
+
+walk(1:length(fylke_nb), function(x){
+  
+  as_duckspatial_df(tables[x], conn = conn_gk) %>%
+    ddbs_collect() %>%
+       st_write(.,
+           path_gpkg,
+           layer = fylke_nb[x],
+           append = TRUE)
+  }
+  )
+
+# Read intermediate layer (if necessary)
+# path_gpkg <- paste0(str_remove(tempdir(), "Rtmp\\w*"), "GK_raw/GK_valid_14AUG2026.gpkg")
+# 
+# layers <- st_layers(path_gpkg)
+# layers <- layers$name
+# 
+# walk(layers, function(x){
+#   
+#   dbExecute(conn_gk, 
+#       sprintf("
+#         CREATE TABLE '%s' AS
+#         SELECT *
+#         FROM ST_Read('%s', layer = '%s')
+#       ", 
+# paste0("grunnkart_valid_", layers[x])),
+# path_gpkg, layers[x])
+#   
+# })
 
 # Clean checks R Environment
 rm(list = setdiff(ls(), c("conn_gk",
@@ -355,52 +405,12 @@ rm(list = setdiff(ls(), c("conn_gk",
 
 
 ## 6. Data formatting
-The goal is now to do a union of each ecosystem type per tile (counties). To do that, we start by doing a union for each ecosystem type per tile. To avoid memory issues, we have to do block processing by dividing the tiles into three groups and perform the union on these three groups separately. We decide to stop the union work here and not union at national level, so across tiles. When we started to union the ecosystem types across tiles, the number of polygons did not change that much. This is because the only places where the polygons might union are at the border of the tiles. Moreover, for URAQ and URGR, intersections are needed with Local Administrative Units, so to decrease the computing time, keeping the information on the county is very useful as we can then just download the county(ies) of relevance instead of the whole dataset.
+The goal is now to do a union of each ecosystem type per tile (counties). To avoid memory issues, we have to do block processing and do the union county by county. It didn't make much sense to union at national level (across tiles) notably because, when we started to union the ecosystem types across tiles, the number of polygons did not change that much. This is because the only places where the polygons might union are at the border of the tiles. Moreover, for URAQ and URGR, intersections are needed with Local Administrative Units, so to decrease the computing time, keeping the information on the county is very useful as we can then just download the county(ies) of relevance instead of the whole dataset.
 
-So first, we create three sub-datasets with 5 tiles each.
-```{r}
-#| eval: false
-#| code-summary: "Create sub-datasets"
-
-## Perform unions of polygons at ET level 1 per tile
-# Create three sub-dataset: 5 tiles each, to lower the memory load
-gk_valid_ddbs <- as_duckspatial_df("grunnkart_valid", conn = conn_gk) # transform the data table in a duckspatial_sf object
-
-filter(gk_valid_ddbs,
-       tile_name %in% c("tile_03",
-                        "tile_11",
-                        "tile_15",
-                        "tile_18",
-                        "tile_31")) %>%
-  ddbs_compute(name = "gunkart_valid_1", temporary = FALSE)
-
-filter(gk_valid_ddbs,
-       tile_name %in% c("tile_32",
-                        "tile_33",
-                        "tile_34",
-                        "tile_39",
-                        "tile_40")) %>%
-  ddbs_compute(name = "gunkart_valid_2", temporary = FALSE)
-
-
-filter(gk_valid_ddbs,
-       tile_name %in% c("tile_42",
-                        "tile_46",
-                        "tile_50",
-                        "tile_55",
-                        "tile_56")) %>%
-  ddbs_compute(name = "gunkart_valid_3", temporary = FALSE)
-
-# Check tables are in the duckdb database
-ddbs_list_tables(conn_gk) 
-
-```
-
-Now we do a union per tile and per ecosystem type: each tile will have merged polygons per ecosystem types present. in the code below, we use the function `ddbs_union_gk()` which we created to do several steps at once: (i) union per tile and ecosystem types; (ii) cast to polygon geometry only; (iii) make the geometry valid. **Important: step (ii) is very important, keeping complex geometries such as multipolygons and geometry collections hinders the spatial calculations as they are difficult to deal with for GDAl and GEOS. That is why, it is essential to always come back to polygons**.
+Doing a union per tile and per ecosystem type will resulst in each tile having merged polygons per ecosystem types present. In the code below, we use the function `ddbs_union_gk()` which we created to do several steps at once: (i) union per tile and ecosystem types; (ii) cast to polygon geometry only; (iii) make the geometry valid. We save the results in a geopackage along the way in case of unexpected crash.
+**Important: step (ii) is very important, keeping complex geometries such as multipolygons and geometry collections hinders the spatial calculations as they are difficult to deal with for GDAl and GEOS. That is why, it is essential to always come back to polygons**.
 
 *Note: DuckDB automatically parallelises processes, hence it is very important to set cores and memory limits in the duckdb connection! With 10 cores and a memory limit of 30GB, it takes about 1h-2h for the union and cleaning to run on one dataset. So in total, the code below should take about 4-5h (patience is a virtue!). We save each intermediate product as a geopackage in case one of the unions crash.*
-
-*Note: this time we use st_write() to export the geopackage because ddbs_write_dataset doe snot allow to append layers.*
 
 ```{r}
 #| eval: false
@@ -410,55 +420,60 @@ Now we do a union per tile and per ecosystem type: each tile will have merged po
 source(here::here("src", "functions", "ddbs_union_gk.R"))
 
 # Path to geopackage to save unions along the way
-path_gpkg <- paste0(str_remove(tempdir(), "Rtmp\\w*"), "GK_raw/GK_union_tile_et1_db_31JULY2026.gpkg")
+path_gpkg <- paste0(str_remove(tempdir(), "Rtmp\\w*"), "GK_raw/GK_union_14AUG2026.gpkg")
 
-# Dataset 1 
-as_duckspatial_df("gunkart_valid_1", conn = conn_gk) %>%
+# List of tables and fylke number
+tables <- dbListTables(conn_gk)
+fylke_nb <- str_extract(tables, "(?<=valid_).{2}") %>%
+              paste0("f", .)
+
+walk(1:length(tables), function(x){
+  
+  message("Processing: ", tables[x])
+  
+  # Do union
+  as_duckspatial_df(tables[x], conn = conn_gk) %>%
   
   ddbs_union_gk(duckspatial_obj = .,
-                union_col = c("tile_name", "okosystemtype_1"),
+                union_col = c("okosystemtype_1"),
                 conn_name = conn_gk, 
-                output_name = "grunnkart_tile_et1_union1")
+                output_name = paste0("grunnkart_union_", fylke_nb[x]))
 
-as_duckspatial_df("grunnkart_tile_et1_union1", conn = conn_gk) %>% # export as a geopackage
-      ddbs_collect(as = "sf") %>%
-        st_write(dsn = path_gpkg,
-                   layer = "union_1")
+  # Export as a geopackage
+  as_duckspatial_df(paste0("grunnkart_union_", fylke_nb[x]), conn = conn_gk) %>% 
+        ddbs_collect(as = "sf") %>%
+          st_write(dsn = path_gpkg,
+                   layer = fylke_nb[x],
+                   append = TRUE)
   
-  
-# Dataset 2
-as_duckspatial_df("gunkart_valid_2", conn = conn_gk) %>%
+}
 
-       ddbs_union_gk(duckspatial_obj = .,
-                union_col = c("tile_name", "okosystemtype_1"),
-                conn_name = conn_gk, 
-                output_name = "grunnkart_tile_et1_union2")
+)
 
-as_duckspatial_df("grunnkart_tile_et1_union2", conn = conn_gk) %>% # export as a geopackage
-  ddbs_collect(as = "sf") %>%
-  st_write(dsn = path_gpkg,
-             layer = "union_2",
-             append = TRUE)
+# Read intermediate layer (if necessary)
+path_gpkg <- paste0(str_remove(tempdir(), "Rtmp\\w*"), "GK_raw/GK_union_14AUG2026.gpkg")
+layers <- st_layers(path_gpkg)
+layers <- layers$name
 
+walk(1: length(layers), function(x){
 
-# Dataset 3
-as_duckspatial_df("gunkart_valid_3", conn = conn_gk) %>%
-  
-        ddbs_union_gk(duckspatial_obj = .,
-                union_col = c("tile_name", "okosystemtype_1"),
-                conn_name = conn_gk, 
-                output_name = "grunnkart_tile_et1_union3")
+  dbExecute(conn_gk,
+      sprintf("
+        CREATE OR REPLACE TABLE '%s' AS
+        SELECT *
+        FROM ST_Read('%s', layer = '%s')
+      ",
+paste0("grunnkart_union_", layers[x]),
+path_gpkg, 
+layers[x]))
 
-as_duckspatial_df("grunnkart_tile_et1_union3", conn = conn_gk) %>% # export as a geopackage
-  ddbs_collect(as = "sf") %>%
-  st_write(dsn = path_gpkg,
-             layer = "union_3",
-             append = TRUE)
+})
 
 # Check geometry
-for(tbl in c("grunnkart_tile_et1_union1",
-             "grunnkart_tile_et1_union2",
-             "grunnkart_tile_et1_union3")){
+tables <- dbListTables(conn_gk) %>%
+            keep(., startsWith(., "grunnkart_union_"))
+
+for(tbl in tables){
   
   message("Processing: ", tbl)
   
@@ -487,12 +502,10 @@ for(tbl in c("grunnkart_tile_et1_union1",
 }
 
 # Clean duckdb databse
-tables <- dbListTables(conn_gk)
-tbl_list <- tables[!tables %in% c("grunnkart_tile_et1_union1",
-                                  "grunnkart_tile_et1_union2",
-                                  "grunnkart_tile_et1_union3")]
+tables <- dbListTables(conn_gk) %>% 
+            keep(., startsWith(., "temp_") | startsWith(., "grunnkart_valid"))
 
-for (tbl in tbl_list) {
+for (tbl in tables) {
 
   if(substr(tbl, 1, 9) == "temp_view"){
 
@@ -505,7 +518,7 @@ for (tbl in tbl_list) {
 
 }
 
-# Verify grunnkart_valid remains
+# Verify grunnkart_union remains
 ddbs_list_tables(conn_gk)
 
 # Clean checks R Environment
@@ -513,260 +526,62 @@ rm(list = setdiff(ls(), c("conn_gk",
                           "pull")))
 
 ```
-
-
-<!-- The second step is to now union across tiles. Due to the heavy processing needed, we still need to do block processing. So we do the union across tiles, of all ecosystem types, on the three separate union dataset we previously computed. As previously, we write the newly created union layers in a geopackage to save them in case of crash. -->
-<!-- ```{r} -->
-<!-- #| eval: false -->
-<!-- #| code-summary: "Union per ecosystem types across tiles - 3 subdatasets" -->
-
-<!-- # Function to perform union and return a clean layer -->
-<!-- source(here::here("src", "functions", "ddbs_union_gk.R")) -->
-
-<!-- # Path to geopackage to save unions along the way -->
-<!-- path_gpkg <- paste0(str_remove(tempdir(), "Rtmp\\w*"), "GK_raw/GK_3unions_et1_db_31JULY2026.gpkg") -->
-
-<!-- # Dataset 1  -->
-<!-- as_duckspatial_df("grunnkart_tile_et1_union1", conn = conn_gk) %>% -->
-<!--     ddbs_union_gk(duckspatial_obj = ., -->
-<!--                 union_col = "okosystemtype_1", -->
-<!--                 conn_name = conn_gk,  -->
-<!--                 output_name = "grunnkart_et1_union1") -->
-
-<!-- as_duckspatial_df("grunnkart_et1_union1", conn = conn_gk) %>% # export as a geopackage -->
-<!--       ddbs_collect(as = "sf") %>% -->
-<!--         st_write(dsn = path_gpkg, -->
-<!--                    layer = "union_et_1") -->
-
-
-
-<!-- # Dataset 2 -->
-<!-- as_duckspatial_df("grunnkart_tile_et1_union2", conn = conn_gk) %>% -->
-
-<!--       ddbs_union_gk(duckspatial_obj = ., -->
-<!--                 union_col = "okosystemtype_1", -->
-<!--                 conn_name = conn_gk,  -->
-<!--                 output_name = "grunnkart_et1_union2") -->
-
-<!-- as_duckspatial_df("grunnkart_et1_union2", conn = conn_gk) %>% # export as a geopackage -->
-<!--       ddbs_collect(as = "sf") %>% -->
-<!--         st_write(dsn = path_gpkg, -->
-<!--                    layer = "union_et_2") -->
-
-
-<!-- # Dataset 3 -->
-<!-- as_duckspatial_df("grunnkart_tile_et1_union3", conn = conn_gk) %>% -->
-
-<!--            ddbs_union_gk(duckspatial_obj = ., -->
-<!--                 union_col = "okosystemtype_1", -->
-<!--                 conn_name = conn_gk,  -->
-<!--                 output_name = "grunnkart_et1_union3") -->
-
-<!-- as_duckspatial_df("grunnkart_et1_union3", conn = conn_gk) %>% # export as a geopackage -->
-<!--       ddbs_collect(as = "sf") %>% -->
-<!--         st_write(dsn = path_gpkg, -->
-<!--                    layer = "union_et_3") -->
-
-
-<!-- # Check geometry -->
-<!-- for(tbl in c("grunnkart_et1_union1", -->
-<!--              "grunnkart_et1_union2", -->
-<!--              "grunnkart_et1_union3")){ -->
-
-<!--   # Checks -->
-<!--   valid_check <- ddbs_is_valid(tbl, conn = conn_gk) %>% -->
-<!--                     filter(!is_valid) %>% -->
-<!--                     ddbs_collect() %>% -->
-<!--                     dim() -->
-
-<!--   empty_check <- ddbs_is_empty(tbl, conn = conn_gk) %>% -->
-<!--                     filter(is_empty == TRUE) %>% -->
-<!--                     ddbs_collect() %>% -->
-<!--                     dim() -->
-
-<!--   simple_check <- ddbs_is_simple(tbl, conn = conn_gk) %>% -->
-<!--                     filter(!is_simple) %>% -->
-<!--                     ddbs_collect() %>% -->
-<!--                     dim() -->
-
-
-<!-- } -->
-
-<!-- # Clean duckdb database -->
-<!-- tables <- dbListTables(conn_gk) -->
-<!-- tbl_list <- tables[!tables %in% c("grunnkart_et1_union1", -->
-<!--                                   "grunnkart_et1_union2", -->
-<!--                                   "grunnkart_et1_union3")] -->
-
-<!-- for (tbl in tbl_list) { -->
-
-<!--   if(substr(tbl, 1, 9) == "temp_view"){ -->
-
-<!--     dbExecute(conn_gk, sprintf("DROP VIEW IF EXISTS %s", dbQuoteIdentifier(conn_gk, tbl))) -->
-
-<!--   }else{ -->
-
-<!--     dbExecute(conn_gk, sprintf("DROP TABLE IF EXISTS %s", dbQuoteIdentifier(conn_gk, tbl))) -->
-<!--   } -->
-
-<!-- } -->
-
-<!-- # Verify grunnkart_valid remains -->
-<!-- ddbs_list_tables(conn_gk) -->
-
-<!-- # Clean checks R Environment -->
-<!-- rm(list = setdiff(ls(), c("conn_gk", -->
-<!--                           "pull"))) -->
-
-<!-- ``` -->
-
-<!-- And now, we are finally ready to merge the three datasets together and do a global union. -->
-<!-- ```{r} -->
-<!-- #| eval: false -->
-<!-- #| code-summary: "Union ecosystem type - national" -->
-
-
-<!-- # Merge Datasets 1 and 2 -->
-<!-- union_d1d2_ddbs <- as_duckspatial_df("grunnkart_et1_union1", conn = conn_gk) %>% -->
-<!--                     union_all(as_duckspatial_df("grunnkart_et1_union2", conn = conn_gk)) -->
-
-<!--       # Union -->
-<!--       ddbs_union_agg(union_d1d2_ddbs, -->
-<!--                      by = "okosystemtype_1") %>%  -->
-
-<!--       # cast complex geom into simple polygons -->
-<!--       ddbs_dump() %>% -->
-
-<!--       # make geometry valid -->
-<!--       ddbs_make_valid(conn = conn_name, -->
-<!--                       name = "union_inter_d1_d2") -->
-
-<!-- # Check geometry -->
-<!-- valid_check <- ddbs_is_valid("union_inter_d1_d2", conn = conn_gk) %>% -->
-<!--                     filter(!is_valid) %>% -->
-<!--                     ddbs_collect() %>% -->
-<!--                     dim() -->
-
-<!-- empty_check <- ddbs_is_empty("union_inter_d1_d2", conn = conn_gk) %>% -->
-<!--                   filter(is_empty == TRUE) %>% -->
-<!--                   ddbs_collect() %>% -->
-<!--                   dim() -->
-
-<!-- simple_check <- ddbs_is_simple("union_inter_d1_d2", conn = conn_gk) %>% -->
-<!--                   filter(!is_simple) %>% -->
-<!--                   dd       -->
-
-
-
-<!-- # Final national union  -->
-<!-- union_inter_d3_ddbs <- as_duckspatial_df("union_inter_d1_d2", conn = conn_gk) %>% -->
-<!--                         union_all(as_duckspatial_df("grunnkart_et1_union3", conn = conn_gk)) -->
-
-<!--       # Union -->
-<!--       ddbs_union_agg(union_inter_d3_ddbs, -->
-<!--                      by = "okosystemtype_1") %>%  -->
-
-<!--       # cast complex geom into simple polygons -->
-<!--       ddbs_dump() %>% -->
-
-<!--       # make geometry valid -->
-<!--       ddbs_make_valid(conn = conn_name, -->
-<!--                       name = "union_grunnakrt_et1_national") -->
-
-
-
-<!-- # Check geometry -->
-<!-- valid_check <- ddbs_is_valid("union_grunnakrt_et1_national", conn = conn_gk) %>% -->
-<!--                     filter(!is_valid) %>% -->
-<!--                     ddbs_collect() %>% -->
-<!--                     dim() -->
-
-<!-- empty_check <- ddbs_is_empty("union_grunnakrt_et1_national", conn = conn_gk) %>% -->
-<!--                   filter(is_empty == TRUE) %>% -->
-<!--                   ddbs_collect() %>% -->
-<!--                   dim() -->
-
-<!-- simple_check <- ddbs_is_simple("union_grunnakrt_et1_national", conn = conn_gk) %>% -->
-<!--                   filter(!is_simple) %>% -->
-<!--                   dim() -->
-
-
-<!-- # Recalculate the area -->
-<!-- gk_valid <- ddbs_area("union_grunnakrt_et1_national", new_column = "area_m2_total", conn = conn_gk, overwrite = TRUE) %>% -->
-<!--                       select(okosystemtype_1, area_m2_total, geo) -->
-
-
-<!-- # Clean duckdb database -->
-<!-- tables <- dbListTables(conn_gk) -->
-<!-- tbl_list <- tables[!tables %in% c("union_inter_d1_d2", -->
-<!--                                   "union_grunnakrt_et1_national")] -->
-
-<!-- for (tbl in tbl_list) { -->
-
-<!--   if(substr(tbl, 1, 9) == "temp_view"){ -->
-
-<!--     dbExecute(conn_gk, sprintf("DROP VIEW IF EXISTS %s", dbQuoteIdentifier(conn_gk, tbl))) -->
-
-<!--   }else{ -->
-
-<!--     dbExecute(conn_gk, sprintf("DROP TABLE IF EXISTS %s", dbQuoteIdentifier(conn_gk, tbl))) -->
-<!--   } -->
-
-<!-- } -->
-
-
-<!-- # Clean checks R Environment -->
-<!-- rm(list = setdiff(ls(), "conn_gk")) -->
-
-<!-- ``` -->
-
 
 
 ## 7. Export file
 
 ### 7.1 Export extent-relevant data
-#### 7.1.1 Export one big national file
-Now, we are just going to export the dataset as a combined one, all tiles together so the dataset can be read with an SQL query and sorted directly with `st_read()` later on. There are two codes below depending on whether the duckdb connection is still active or if the user prefers to use the intermediate geopackage we already exported.
+Exports were done in two projections: ESPG 25833 and 25832. For the geopackages exported per county (fylke), we also exported with the projection inherited from the GK. We re-calculate the area before exporting. *Note: DuckDB's function to calculate the area popped a warning when calculating the area using the CRS inherited from the original GK. One of the projection used created some mathematical inconsistencies. Areas should thus be used with care for when the original GK projection is used.*
+
+#### 7.1.1 Export files per county
 ```{r export}
 #| eval: false
-#| code-summary: "Export in EPSG:25832"
+#| code-summary: "Export in original county projection"
 
-## From duckdb connection
-# Merge the unions
-tile_union_ddbs <- as_duckspatial_df("grunnkart_tile_et1_union1", conn = conn_gk) %>%
-                      union_all(as_duckspatial_df("grunnkart_tile_et1_union2", conn = conn_gk)) %>%
-                      union_all(as_duckspatial_df("grunnkart_tile_et1_union3", conn = conn_gk)) %>%
-                      ddbs_compute(name = "grunnkart_tile_et1_union_all", 
-                                   temporary = FALSE) %>%
-                      ddbs_collect()
+# Path
+path_gpkg <- paste0(str_remove(tempdir(), "Rtmp\\w*"), "GK_raw/GK_final_original_crs_")
 
-# Add fylke nummer
-union_all <- tile_union_ddbs %>%
-              mutate(., fylke_nr = str_extract(.$tile_name, "\\d+"), 
-                     .before = okosystemtype_1) %>%
-              select(!tile_name)
+# List of tables in duckdb database
+tables <- dbListTables(conn_gk) %>% 
+            keep(., startsWith(., "grunnkart_union"))
 
-# Export
-path_gpkg <- paste0(str_remove(tempdir(), "Rtmp\\w*"), "GK_raw/GK_final_UTM32.gpkg")
-et1 <- unique(union_all$okosystemtype_1) %>% sort()
+# Fylke number
+fylke_nb <- str_extract(tables, "(?<=union_).{3}")
 
-for (lyr in et1){
+walk(1: length(fylke_nb), function(x){
   
-  et <- union_all %>%
-          filter(okosystemtype_1 == lyr)
+  gk_fyk_tbl<-  as_duckspatial_df(tables[x], conn_gk) %>%
+                ddbs_area(new_column = "area_m2") %>% 
+                ddbs_collect() %>%
+                select(!fid) %>% # if from intermediate layer!
+                rename(fylke_code = tile_name) %>%
+                rename(okosystemtype1_name = okosystemtype_1) %>%
+                mutate(okosystemtype1_code = if_else(okosystemtype1_name == "Settlements and other artificial areas", "e01", 
+                                                     ifelse(okosystemtype1_name == "Cropland", "e02",
+                                                            ifelse(okosystemtype1_name == "Grassland", "e03",
+                                                                   ifelse(okosystemtype1_name == "Forest and woodlands", "e04", 
+                                                                          ifelse(okosystemtype1_name == "Heathland and shrub", "e05",
+                                                                                 ifelse(okosystemtype1_name == "Sparsely vegetated ecosystems", "e06",
+                                                                                        ifelse(okosystemtype1_name == "Inland wetlands", "e07",
+                                                                                        ifelse(okosystemtype1_name == "Rivers and canals", "e08",
+                                                                                        ifelse(okosystemtype1_name == "Lakes and reservoirs", "e09",
+                                                                                        ifelse(okosystemtype1_name == "Marine inlets and transitional waters", "e10",
+                                                                                        ifelse(okosystemtype1_name == "Coastal beaches, dunes and wetlands", "e11",
+                                                                                        ifelse(okosystemtype1_name == "Marine ecosystems", "e12",
+                                                                                        ifelse("ERROR"))))))))))))))
+    
   
-  st_write(et,
-           path_gpkg,
-           layer = lyr,
-           append = TRUE)
-}
-
+  st_write(gk_fyk_tbl,
+           paste0(path_gpkg, fylke_nb[x], ".gpkg"),
+           append = FALSE)
+  
+})
 
 # Clean duckdb databse
-tables <- dbListTables(conn_gk)
-tbl_list <- tables[!tables %in% "grunnkart_tile_et1_union_all"]
+tables <- dbListTables(conn_gk) %>% 
+            keep(., startsWith(., "temp_"))
 
-for (tbl in tbl_list) {
+for (tbl in tables) {
 
   if(substr(tbl, 1, 9) == "temp_view"){
 
@@ -779,215 +594,343 @@ for (tbl in tbl_list) {
 
 }
 
-# Verify grunnkart_valid remains
-ddbs_list_tables(conn_gk)
+# Clean checks R Environment
+rm(list = setdiff(ls(), c("conn_gk",
+                          "pull")))
+  
+
+```
+
+```{r export}
+#| eval: false
+#| code-summary: "Export in EPSG:25832"
+
+# Path
+path_gpkg <- paste0(str_remove(tempdir(), "Rtmp\\w*"), "GK_raw/GK_final_UTM32_")
+
+# List of tables in duckdb database
+tables <- dbListTables(conn_gk) %>% 
+            keep(., startsWith(., "grunnkart_union"))
+
+# Fylke number
+fylke_nb <- str_extract(tables, "(?<=union_).{3}")
+
+# Create geopackage
+walk(1: length(fylke_nb), function(x){
+  
+  gk_fyk_tbl<-  ddbs_transform(x = tables[x], y = "EPSG:25832", conn = conn_gk) %>%
+                ddbs_make_valid() %>%
+                ddbs_area(new_column = "area_m2") %>%
+                ddbs_collect() %>%
+                select(!fid) %>% # if from intermediate layer!
+                rename(fylke_code = tile_name) %>%
+                rename(okosystemtype1_name = okosystemtype_1) %>%
+                mutate(okosystemtype1_code = if_else(okosystemtype1_name == "Settlements and other artificial areas", "e01", 
+                                                     ifelse(okosystemtype1_name == "Cropland", "e02",
+                                                            ifelse(okosystemtype1_name == "Grassland", "e03",
+                                                                   ifelse(okosystemtype1_name == "Forest and woodlands", "e04", 
+                                                                          ifelse(okosystemtype1_name == "Heathland and shrub", "e05",
+                                                                                 ifelse(okosystemtype1_name == "Sparsely vegetated ecosystems", "e06",
+                                                                                        ifelse(okosystemtype1_name == "Inland wetlands", "e07",
+                                                                                        ifelse(okosystemtype1_name == "Rivers and canals", "e08",
+                                                                                        ifelse(okosystemtype1_name == "Lakes and reservoirs", "e09",
+                                                                                        ifelse(okosystemtype1_name == "Marine inlets and transitional waters", "e10",
+                                                                                        ifelse(okosystemtype1_name == "Coastal beaches, dunes and wetlands", "e11",
+                                                                                        ifelse(okosystemtype1_name == "Marine ecosystems", "e12",
+                                                                                        ifelse("ERROR"))))))))))))))
+    
+  
+  st_write(gk_fyk_tbl,
+           paste0(path_gpkg, fylke_nb[x], ".gpkg"),
+           append = FALSE)
+  
+})
+
+# Clean duckdb databse
+tables <- dbListTables(conn_gk) %>% 
+            keep(., startsWith(., "temp_"))
+
+for (tbl in tables) {
+
+  if(substr(tbl, 1, 9) == "temp_view"){
+
+    dbExecute(conn_gk, sprintf("DROP VIEW IF EXISTS %s", dbQuoteIdentifier(conn_gk, tbl)))
+
+  }else{
+
+    dbExecute(conn_gk, sprintf("DROP TABLE IF EXISTS %s", dbQuoteIdentifier(conn_gk, tbl)))
+  }
+
+}
 
 # Clean checks R Environment
 rm(list = setdiff(ls(), c("conn_gk",
                           "pull")))
 
-
-## From intermediate geopackage
-# Path to geopackage to save unions along the way
-path_gpkg <- paste0(str_remove(tempdir(), "Rtmp\\w*"), "GK_raw/GK_union_tile_et1_db_31JULY2026.gpkg")
-st_layers(path_gpkg)
-
-# Read geopackage
-union_1 <- st_read(path_gpkg, layer = "union_1")
-union_2 <- st_read(path_gpkg, layer = "union_2")
-union_3 <- st_read(path_gpkg, layer = "union_3")
-
-# Merge all tiles together
-union_all <- bind_rows(union_1,
-                       union_2,
-                       union_3)
-
-# Add fylke nummer column
-union_all <- union_all %>%
-                mutate(., fylke_nr = str_extract(.$tile_name, "\\d+"), 
-                       .before = okosystemtype_1) %>%
-                select(!tile_name)
-
-# Export
-path_gpkg <- paste0(str_remove(tempdir(), "Rtmp\\w*"), "GK_raw/GK_final_UTM32.gpkg")
-et1 <- unique(union_all$okosystemtype_1) %>% sort()
-
-for (lyr in et1){
-  
-  et <- union_all %>%
-          filter(okosystemtype_1 == lyr)
-  
-  st_write(et,
-           path_gpkg,
-           layer = lyr,
-           append = TRUE)
-}
-
-
-# Clean checks R Environment
-rm(list = setdiff(ls(), c("conn_gk",
-                          "pull",
-                          "union_all")))
-
 ```
-
-It may be that the Grunnkart is needed in EPSG:25833. The code below allows to re-project and export the data in this other CRS.
 
 ```{r export}
 #| eval: false
 #| code-summary: "Export in EPSG:25833"
 
-## CRS to project to
-gdb_folder <- "/data/R/GeoSpatialData/LandUse/Norway_Arealregnskap/Original/GrunnkartArealregnskap FGDB-format"
+## Path
+path_gpkg <- paste0(str_remove(tempdir(), "Rtmp\\w*"), "GK_raw/GK_final_UTM33_")
 
-gdb_files <- list.files(gdb_folder, pattern = "_gdb\\.gdb$", 
-                        full.names = TRUE)
+# List of tables in duckdb database
+tables <- dbListTables(conn_gk) %>% 
+            keep(., startsWith(., "grunnkart_union"))
 
-gk_crs <- st_read(gdb_files[4], 
-                  query = "SELECT * FROM arealregnskap LIMIT 10") %>%
-            st_crs()
+# Fylke number
+fylke_nb <- str_extract(tables, "(?<=union_).{3}")
 
-
-## From duckdb connection
-# Re-project GK in the CRS of PM2.5 data: EPSG:25833
-as_duckspatial_df("grunnkart_tile_et1_union_all",
-                  conn = conn_gk) %>%
-      ddbs_transform(x = .,
-                     y = gk_crs,
-                     conn = conn_gk) %>%
-      ddbs_make_valid(conn = conn_gk,
-                      "grunnkart_33",
-                      overwrite = TRUE)
-
-# Check validity
-valid_check <- ddbs_is_valid("grunnkart_33",
-                             conn = conn_gk) %>%
-                  filter(!is_valid) %>% # same as is_valid == FALSE
-                  ddbs_collect() %>%
-                  dim()
-
-empty_check <- ddbs_is_empty("grunnkart_33",
-                             conn = conn_gk) %>%
-                  filter(is_empty == TRUE) %>%
-                  ddbs_collect() %>%
-                  dim()
-
-simple_check <- ddbs_is_simple("grunnkart_33",
-                               conn = conn_gk) %>%
-                  filter(!is_simple) %>% # same as is_simple == FALSE
-                  ddbs_collect() %>%
-                  dim()
-
-# Export
-path_gpkg <- paste0(str_remove(tempdir(), "Rtmp\\w*"), "GK_raw/GK_final_UTM33.gpkg")
-union_all_33 <- as_duckspatial_df("grunnkart_33",
-                   conn = conn_gk) %>%
-                    select(!fid)
-
-et1 <- unique(union_all_33$okosystemtype_1) %>% sort()
-
-for (lyr in et1){
+# Create geopackage
+walk(1: length(fylke_nb), function(x){
   
-  et <- union_all_33 %>%
-          filter(okosystemtype_1 == lyr)
+  gk_fyk_tbl<-  ddbs_transform(x = tables[x], y = "EPSG:25833", conn = conn_gk) %>%
+                ddbs_make_valid() %>%
+                ddbs_area(new_column = "area_m2") %>%
+                ddbs_collect() %>%
+                select(!fid) %>% # if from intermediate layer!
+                rename(fylke_code = tile_name) %>%
+                rename(okosystemtype1_name = okosystemtype_1) %>%
+                mutate(okosystemtype1_code = if_else(okosystemtype1_name == "Settlements and other artificial areas", "e01", 
+                                                     ifelse(okosystemtype1_name == "Cropland", "e02",
+                                                            ifelse(okosystemtype1_name == "Grassland", "e03",
+                                                                   ifelse(okosystemtype1_name == "Forest and woodlands", "e04", 
+                                                                          ifelse(okosystemtype1_name == "Heathland and shrub", "e05",
+                                                                                 ifelse(okosystemtype1_name == "Sparsely vegetated ecosystems", "e06",
+                                                                                        ifelse(okosystemtype1_name == "Inland wetlands", "e07",
+                                                                                        ifelse(okosystemtype1_name == "Rivers and canals", "e08",
+                                                                                        ifelse(okosystemtype1_name == "Lakes and reservoirs", "e09",
+                                                                                        ifelse(okosystemtype1_name == "Marine inlets and transitional waters", "e10",
+                                                                                        ifelse(okosystemtype1_name == "Coastal beaches, dunes and wetlands", "e11",
+                                                                                        ifelse(okosystemtype1_name == "Marine ecosystems", "e12",
+                                                                                        ifelse("ERROR"))))))))))))))
+    
   
-  st_write(et,
-           path_gpkg,
-           layer = lyr,
-           append = TRUE)
+  st_write(gk_fyk_tbl,
+           paste0(path_gpkg, fylke_nb[x], ".gpkg"),
+           append = FALSE)
+  
+})
+
+# Clean duckdb databse
+tables <- dbListTables(conn_gk) %>% 
+            keep(., startsWith(., "temp_"))
+
+for (tbl in tables) {
+
+  if(substr(tbl, 1, 9) == "temp_view"){
+
+    dbExecute(conn_gk, sprintf("DROP VIEW IF EXISTS %s", dbQuoteIdentifier(conn_gk, tbl)))
+
+  }else{
+
+    dbExecute(conn_gk, sprintf("DROP TABLE IF EXISTS %s", dbQuoteIdentifier(conn_gk, tbl)))
+  }
+
 }
-
-
-# Close duckdb connection
-ddbs_stop_conn(conn_gk)
 
 # Clean checks R Environment
-rm(list = ls())
-
-
-## From intermediate geopackage
-# Path to geopackage to save unions along the way
-path_gpkg <- paste0(str_remove(tempdir(), "Rtmp\\w*"), "GK_raw/GK_union_tile_et1_db_31JULY2026.gpkg")
-st_layers(path_gpkg)
-
-# Re-project GK in the CRS of PM2.5 data: EPSG:25833
-union_all_33 <- ddbs_transform(x = union_all,
-                     y = gk_crs,
-                     conn = conn_pm) %>%
-                  ddbs_make_valid(conn = conn_pm) %>%
-                  ddbs_collect()
-
-# Check validity
-valid_check <- ddbs_is_valid(union_all_33,
-                             conn = conn_gk) %>%
-                  filter(!is_valid) %>% # same as is_valid == FALSE
-                  ddbs_collect() %>%
-                  dim()
-
-empty_check <- ddbs_is_empty(union_all_33,
-                             conn = conn_gk) %>%
-                  filter(is_empty == TRUE) %>%
-                  ddbs_collect() %>%
-                  dim()
-
-simple_check <- ddbs_is_simple(union_all_33,
-                               conn = conn_gk) %>%
-                  filter(!is_simple) %>% # same as is_simple == FALSE
-                  ddbs_collect() %>%
-                  dim()
-
-# Export
-path_gpkg <- paste0(str_remove(tempdir(), "Rtmp\\w*"), "GK_raw/GK_final_UTM33.gpkg")
-et1 <- unique(union_all_33$okosystemtype_1) %>% sort()
-
-for (lyr in et1){
-  
-  et <- union_all_33 %>%
-          filter(okosystemtype_1 == lyr)
-  
-  st_write(et,
-           path_gpkg,
-           layer = lyr,
-           append = TRUE)
-}
+rm(list = setdiff(ls(), c("conn_gk",
+                          "pull")))
 
 ```
 
 
-#### 7.1.2 Export files per county
+#### 7.1.2 Export files per ecosystem type
+Now, we are just going to export one geopackage per ET, both in EPSG 25833 and 25832.
+
 ```{r export}
 #| eval: false
-#| code-summary: "Export in EPSG:25832 and EPSG:25832"
+#| code-summary: "Export in EPSG:25833"
 
-# Export EPSG:25832
-path_gpkg <- paste0(str_remove(tempdir(), "Rtmp\\w*"), "GK_raw/GK_final_UTM32_")
-fylke_list <- unique(union_all$fylke_nr) %>% sort()
+## Path
+path_gpkg <- paste0(str_remove(tempdir(), "Rtmp\\w*"), "GK_raw/GK_final_ecosystemtype_UTM33_")
 
-for (fyk in fylke_list){
+# List of tables in duckdb database
+tables <- dbListTables(conn_gk) %>% 
+            keep(., startsWith(., "grunnkart_union"))
+
+# Fylke number
+fylke_nb <- str_extract(tables, "(?<=union_).{3}")
+
+
+# Re-project fylke and union them
+walk(1 : length(fylke_nb), function(x){
   
-  gk_fyk <- union_all %>%
-              filter(fylke_nr == fyk)
+  message("Processing fylke: ", fylke_nb[x])
   
-  st_write(gk_fyk,
-           paste0(path_gpkg, fyk, ".gpkg"))
+  
+  # Project and compile area
+  ddbs_sd <- ddbs_transform(x = tables[x], y = "EPSG:25833", conn = conn_gk) %>%
+                ddbs_make_valid() %>%
+                ddbs_area(new_column = "area_m2")
+  
+  # Write the table in the duckdb database
+  if (!DBI::dbExistsTable(conn_gk, "grunnkart_all_33")) {
+
+    # First tile: create the table
+    ddbs_sd %>%
+      ddbs_write_table(conn = conn_gk, name = "grunnkart_all_33")
+
+  } else {
+
+    # Subsequent tiles: append
+    rows_append(tbl(conn_gk, "grunnkart_all_33"),
+                ddbs_sd,
+                in_place = TRUE)
+  }
+  
+})
+
+# Check table is in the duckdb database
+ddbs_list_tables(conn_gk)
+
+# List of ETs
+et_list <- dbGetQuery(conn_gk, "SELECT DISTINCT okosystemtype_1 FROM grunnkart_all_33")[[1]]
+
+# Create geopackage
+walk(1: length(et_list), function(x){
+  
+  message("Processing ET: ", et_list[x])
+  
+  gk_fyk_tbl<-  as_duckspatial_df("grunnkart_all_33", conn = conn_gk) %>%
+                filter(okosystemtype_1 == !!et_list[[x]]) %>%
+                ddbs_collect() %>%
+                select(!fid) %>% # if from intermediate layer!
+                rename(fylke_code = tile_name) %>%
+                rename(okosystemtype1_name = okosystemtype_1) %>%
+                mutate(okosystemtype1_code = if_else(okosystemtype1_name == "Settlements and other artificial areas", "e01", 
+                                                     ifelse(okosystemtype1_name == "Cropland", "e02",
+                                                            ifelse(okosystemtype1_name == "Grassland", "e03",
+                                                                   ifelse(okosystemtype1_name == "Forest and woodlands", "e04", 
+                                                                          ifelse(okosystemtype1_name == "Heathland and shrub", "e05",
+                                                                                 ifelse(okosystemtype1_name == "Sparsely vegetated ecosystems", "e06",
+                                                                                        ifelse(okosystemtype1_name == "Inland wetlands", "e07",
+                                                                                        ifelse(okosystemtype1_name == "Rivers and canals", "e08",
+                                                                                        ifelse(okosystemtype1_name == "Lakes and reservoirs", "e09",
+                                                                                        ifelse(okosystemtype1_name == "Marine inlets and transitional waters", "e10",
+                                                                                        ifelse(okosystemtype1_name == "Coastal beaches, dunes and wetlands", "e11",
+                                                                                        ifelse(okosystemtype1_name == "Marine ecosystems", "e12",
+                                                                                        ifelse("ERROR"))))))))))))))
+    
+  
+  st_write(gk_fyk_tbl,
+           paste0(path_gpkg, unique(gk_fyk_tbl$okosystemtype1_code), ".gpkg"),
+           append = FALSE)
+  
+})
+
+# Clean duckdb databse
+tables <- dbListTables(conn_gk) %>% 
+            keep(., startsWith(., "temp_") | startsWith(., "grunnkart_all"))
+
+for (tbl in tables) {
+
+  if(substr(tbl, 1, 9) == "temp_view"){
+
+    dbExecute(conn_gk, sprintf("DROP VIEW IF EXISTS %s", dbQuoteIdentifier(conn_gk, tbl)))
+
+  }else{
+
+    dbExecute(conn_gk, sprintf("DROP TABLE IF EXISTS %s", dbQuoteIdentifier(conn_gk, tbl)))
+  }
+
 }
-
-# Export EPSG:25833
-path_gpkg <- paste0(str_remove(tempdir(), "Rtmp\\w*"), "GK_raw/GK_final_UTM33_")
-fylke_list <- unique(union_all_33$fylke_nr) %>% sort()
-
-for (fyk in fylke_list){
-  
-  gk_fyk <- union_all_33 %>%
-              filter(fylke_nr == fyk)
-  
-  st_write(gk_fyk,
-           paste0(path_gpkg, fyk, ".gpkg"))
-}
-
 
 # Clean checks R Environment
-rm(ls())
+rm(list = setdiff(ls(), c("conn_gk",
+                          "pull")))
+
+```
+
+
+```{r export}
+#| eval: false
+#| code-summary: "Export in EPSG:25832"
+
+## Path
+path_gpkg <- paste0(str_remove(tempdir(), "Rtmp\\w*"), "GK_raw/GK_final_ecosystemtype_UTM32_")
+
+# List of tables in duckdb database
+tables <- dbListTables(conn_gk) %>% 
+            keep(., startsWith(., "grunnkart_union"))
+
+# Fylke number
+fylke_nb <- str_extract(tables, "(?<=union_).{3}")
+
+
+# Re-project fylke and union them
+walk(1 : length(fylke_nb), function(x){
+  
+  message("Processing fylke: ", fylke_nb[x])
+  
+  # Project and compile area
+  ddbs_sd <- ddbs_transform(x = tables[x], y = "EPSG:25832", conn = conn_gk) %>%
+                ddbs_make_valid() %>%
+                ddbs_area(new_column = "area_m2")
+  
+  # Write the table in the duckdb database
+  if (!DBI::dbExistsTable(conn_gk, "grunnkart_all_32")) {
+
+    # First tile: create the table
+    ddbs_sd %>%
+      ddbs_write_table(conn = conn_gk, name = "grunnkart_all_32")
+
+  } else {
+
+    # Subsequent tiles: append
+    rows_append(tbl(conn_gk, "grunnkart_all_32"),
+                ddbs_sd,
+                in_place = TRUE)
+  }
+  
+})
+
+# Check table is in the duckdb database
+ddbs_list_tables(conn_gk)
+
+# List of ETs
+et_list <- dbGetQuery(conn_gk, "SELECT DISTINCT okosystemtype_1 FROM grunnkart_all_32")[[1]]
+
+# Create geopackage
+walk(1: length(et_list), function(x){
+  
+  message("Processing ET: ", et_list[x])
+  
+  gk_fyk_tbl<-  as_duckspatial_df("grunnkart_all_32", conn = conn_gk) %>%
+                filter(okosystemtype_1 == !!et_list[[x]]) %>%
+                ddbs_collect() %>%
+                select(!fid) %>% # if from intermediate layer!
+                rename(fylke_code = tile_name) %>%
+                rename(okosystemtype1_name = okosystemtype_1) %>%
+                mutate(okosystemtype1_code = if_else(okosystemtype1_name == "Settlements and other artificial areas", "e01", 
+                                                     ifelse(okosystemtype1_name == "Cropland", "e02",
+                                                            ifelse(okosystemtype1_name == "Grassland", "e03",
+                                                                   ifelse(okosystemtype1_name == "Forest and woodlands", "e04", 
+                                                                          ifelse(okosystemtype1_name == "Heathland and shrub", "e05",
+                                                                                 ifelse(okosystemtype1_name == "Sparsely vegetated ecosystems", "e06",
+                                                                                        ifelse(okosystemtype1_name == "Inland wetlands", "e07",
+                                                                                        ifelse(okosystemtype1_name == "Rivers and canals", "e08",
+                                                                                        ifelse(okosystemtype1_name == "Lakes and reservoirs", "e09",
+                                                                                        ifelse(okosystemtype1_name == "Marine inlets and transitional waters", "e10",
+                                                                                        ifelse(okosystemtype1_name == "Coastal beaches, dunes and wetlands", "e11",
+                                                                                        ifelse(okosystemtype1_name == "Marine ecosystems", "e12",
+                                                                                        ifelse("ERROR"))))))))))))))
+    
+  
+  st_write(gk_fyk_tbl,
+           paste0(path_gpkg, unique(gk_fyk_tbl$okosystemtype1_code), ".gpkg"),
+           append = FALSE)
+  
+})
+
+# Close duckdb database
+ddbs_stop_conn(conn_gk)
+
+# CleanR Environment
+rm(list = ls())
 
 ```
 
