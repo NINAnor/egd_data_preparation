@@ -195,6 +195,7 @@ The first step is to open a connection to DuckDB. We advise to do it on a tempor
 #| eval: false
 #| code-summary: "Create a DuckDB connection"
 conn_gk <- ddbs_create_conn(dbdir = "tempdir", threads = 10, memory_limit_gb = 30)
+target_crs <- 25832 # BC: this should be 25833 
 
 ```
 
