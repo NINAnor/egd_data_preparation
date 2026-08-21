@@ -1,8 +1,8 @@
 # ---------------------------------------
 #
-# Shared configuration for the Grunnkart pre-processing (BC_prep_GK*)
-#   sourced by BOTH the interactive driver (BC_prep_GK.R) and the standalone
-#   per-fylke runner (run_fylke.R), so a single edit keeps them in sync.
+# Shared configuration for the Grunnkart pre-processing (gk_*)
+#   sourced by BOTH the interactive driver (scripts/run_gk_all.R) and the standalone
+#   per-fylke runner (scripts/run_fylke.R), so a single edit keeps them in sync.
 #   Assumes fs::path() is available (load `fs` before sourcing).
 #
 # ---------------------------------------

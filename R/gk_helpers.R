@@ -1,6 +1,6 @@
 # ---------------------------------------
 # 
-# Helper functions and SQL queries for prep_GK.R
+# Helper functions and SQL queries for the Grunnkart pipeline (gk_pipeline.R)
 #
 # ---------------------------------------
 

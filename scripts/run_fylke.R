@@ -4,9 +4,9 @@
 # Standalone per-fylke runner for the Grunnkart pre-processing.
 #   Processes ONE fylke in an isolated R process with its own DuckDB connection.
 #   Designed to be dispatched by GNU parallel (one process per fylke, see
-#   run_all_fylker.sh) on the server, but also runnable directly on a PC.
+#   scripts/run_all_fylker.sh) on the server, but also runnable directly on a PC.
 #
-# Usage:  Rscript src/code/run_fylke.R <path/to/fylke.gdb> [--force]
+# Usage:  Rscript scripts/run_fylke.R <path/to/fylke.gdb> [--force]
 #
 # ---------------------------------------
 
@@ -30,9 +30,9 @@ if (is.na(gdb_file) || !dir_exists(gdb_file))
   stop("Provide a valid .gdb path as the first argument. Got: ", gdb_file %||% "<none>")
 
 # --- config, helpers, per-fylke pipeline ---
-source(here::here("src/code", "BC_prep_GK_config.R"))
-source(here::here("src/code", "BC_prep_GK_helpers.R"))
-source(here::here("src/code", "BC_prep_GK_fylke.R"))
+source(here::here("R", "gk_config.R"))
+source(here::here("R", "gk_helpers.R"))
+source(here::here("R", "gk_pipeline.R"))
 
 # --- per-process DuckDB connection (own temp database) ---
 if (!is.null(gk_tmpdir)) dir_create(gk_tmpdir)

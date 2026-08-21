@@ -8,7 +8,7 @@
 # Driver for the per-fylke Grunnkart cycle. It sources the shared config, the SQL/helpers
 # and the per-fylke pipeline (process_fylke), then runs every fylke. On the NINA linux
 # server the heavy lifting is dispatched one process per fylke via GNU parallel (see
-# run_all_fylker.sh); the sequential loop below is the PC fallback. Per fylke it exports
+# scripts/run_all_fylker.sh); the sequential loop below is the PC fallback. Per fylke it exports
 # three gpkgs: the level-1 dissolved ET map, the s1 (EDDE) masks, and the s2 (DEED) masks.
 
 library(tidyverse)
@@ -25,9 +25,9 @@ library(pipetime)
 ### Config, helpers, per-fylke pipeline ---
 ###
 
-source(here::here("src/code", "BC_prep_GK_config.R"))   # paths, year, thresholds, resource limits
-source(here::here("src/code", "BC_prep_GK_helpers.R"))  # SQL query templates & helper functions
-source(here::here("src/code", "BC_prep_GK_fylke.R"))    # process_fylke(): the full per-fylke pipeline
+source(here::here("R", "gk_config.R"))    # paths, year, thresholds, resource limits
+source(here::here("R", "gk_helpers.R"))   # SQL query templates & helper functions
+source(here::here("R", "gk_pipeline.R"))  # process_fylke(): the full per-fylke pipeline
 
 # # detect the available resources (# typical reserved / low-usage values in comments)
 # mem_info <- readLines("/proc/meminfo")
@@ -45,7 +45,7 @@ gdb_files <- dir_ls(gdb_folder, regexp = "gdb$")
 # memory is reclaimed cleanly on exit and a crash in one fylke cannot affect the others.
 # Restartable: fylkes whose three gpkgs already exist are skipped.
 #
-#   bash run_all_fylker.sh 8      # 8 = concurrent fylke jobs (each uses nthreads/memlimit from config)
+#   bash scripts/run_all_fylker.sh 8   # 8 = concurrent fylke jobs (each uses nthreads/memlimit from config)
 #
 # Logs & per-fylke stdout/stderr land in ./logs (joblog.tsv holds the exit codes).
 
