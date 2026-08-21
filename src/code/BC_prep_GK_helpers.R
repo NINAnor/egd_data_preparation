@@ -75,13 +75,13 @@ query_dissolve_full <- "
   WITH exploded AS (
     SELECT e_id, f_id, (UNNEST(ST_Dump(geom))).geom AS geom
     FROM {ii}),
-  valid AS (
-    SELECT e_id, f_id, ST_MakeValid(geom) AS geom
+  deslivered AS (
+    SELECT e_id, f_id, geom
     FROM exploded
     WHERE ST_Area(geom) > {sv} AND geom IS NOT NULL),
   dissolved AS (
     SELECT e_id, f_id, UNNEST(ST_Dump(ST_Union_Agg(geom))) AS dump_struct
-    FROM valid
+    FROM deslivered
     GROUP BY e_id, f_id)
   SELECT e_id, f_id, ST_MakeValid(dump_struct.geom) AS geom
   FROM dissolved"
@@ -118,12 +118,12 @@ query_DE_all <- "
     FROM {ii} WHERE e_id <= 'e09' AND geom IS NOT NULL
     GROUP BY e_id),
   eroded AS (
-    SELECT e_id, ST_Buffer(merged_geom, -{bd}, {ns}) AS closed_geom
+    SELECT e_id, ST_Buffer(ST_MakeValid(merged_geom), -{bd}, {ns}) AS closed_geom
     FROM dilated_and_unioned WHERE merged_geom IS NOT NULL),
   dumped AS (
     SELECT e_id, UNNEST(ST_Dump(closed_geom)) AS dump_struct
     FROM eroded WHERE closed_geom IS NOT NULL)
-  SELECT '{f_id}' AS f_id, e_id, ST_MakeValid(dump_struct.geom) AS geom
+  SELECT '{f_id}' AS f_id, e_id, dump_struct.geom AS geom
   FROM dumped"
 
 # an ED query handling all ETs (e01-e09) in one go
@@ -149,12 +149,12 @@ query_DE <- "
     SELECT ST_Union_Agg(ST_Buffer(ST_SimplifyPreserveTopology(geom, {ts}), {bd}, {ns})) AS merged_geom
     FROM {ii} WHERE e_id = '{e_id}' AND geom IS NOT NULL),
   eroded AS (
-    SELECT ST_Buffer(merged_geom, -{bd}, {ns}) AS eroded_geom
+    SELECT ST_Buffer(ST_MakeValid(merged_geom), -{bd}, {ns}) AS eroded_geom
     FROM dilated_and_unioned WHERE merged_geom IS NOT NULL),
   dumped AS (
     SELECT UNNEST(ST_Dump(eroded_geom)) AS dump_struct
     FROM eroded WHERE eroded_geom IS NOT NULL)
-  SELECT '{f_id}' AS f_id, '{e_id}' AS e_id, ST_MakeValid(dump_struct.geom) AS geom
+  SELECT '{f_id}' AS f_id, '{e_id}' AS e_id, dump_struct.geom AS geom
   FROM dumped"
 
 # an ED query handling just a single ET (={e_id})

@@ -12,6 +12,7 @@ library(duckspatial)
 library(sf)
 library(fs)
 library(glue)
+library(withr)
 library(pipetime) 
 
 ###
@@ -19,7 +20,7 @@ library(pipetime)
 ### Config, setup ---
 ###
 
-ninaServer <- T
+ninaServer <- F
 
 # import paths
 pdrive <- if(ninaServer) "~/Mounts/P-Prosjekter2/" else "P:/"
@@ -58,12 +59,12 @@ source(here::here("src/code", "BC_prep_GK_helpers.R"))
 # preset suitable values -- customise as needed
 #   (from Gemini): DuckDB functions best when allocated between 1 GB and 4 GB of RAM per active thread
 #   (from Claude): >8 threads buys you nothing, so it's kinder to reserve capacity (& e.g. run several ET/fylke jobs concurrently)
-nthreads= 8  # these numbers (8, 32) were suggested by Claude (after diagnostic checks)
-memlimit= 32 # in GB
+nthreads= if (ninaServer) 8  else 4  # numbers for ninapc suggested by Gemini, for the server by Claude (after diagnostic checks)
+memlimit= if (ninaServer) 32 else 4  
 
-f_db1 <- file_temp(ext= "ddb") %>% {cat("\nDuckDB Database set to: ", ., "\n"); .}      # database in a temp file
+f_db0 <- file_temp(ext= "ddb") %>% {cat("\nDuckDB Database set to: ", ., "\n"); .}      # database in a temp file
 # f_db1 <- "/tmp/RtmpYJ337f/file3556bc64df8ac6.ddb" # ...or reload a previous file here
-conn_gk <- ddbs_create_conn(dbdir= f_db1, threads= nthreads, memory_limit_gb= memlimit) #
+conn_gk <- ddbs_create_conn(dbdir= f_db0, threads= nthreads, memory_limit_gb= memlimit) #
 # side notes: 
 #   * DuckDB automatically parallelises processes (except for ST_Union_Agg)
 #     With 10 cores and a memory limit of 30GB, it takes about 1h-2h for the union and cleaning to run on one dataset. 
@@ -84,19 +85,30 @@ if (F) {  ### -- potentially useful database commands
 
 gdb_files <-  dir_ls(gdb_folder, regexp = "gdb$") 
 
-gdb_1 <- gdb_files[str_detect(gdb_files,"/32_")] # fylke #32 is Akershus
 #-- placeholder: the "purr::map(gdb_files, function \(gdb1) {...})"-style cycle (optimised with paralell/mirai) will start here
 
+gdb_1 <- gdb_files[str_detect(gdb_files,"/32_")] # fylke #32 is Akershus
+fdb_1 <- file_temp(ext= "fgb") # a temporary fgb (FlatGeobuf) file -- which is much better for duckdb(!)
 fid_1 <- gdb_1 %>% str_extract("(?<=format/).{2}") %>% paste0("f",.) # RE finding "format/", and pulling out the next 2 characters
 
-ddbs_open_dataset(gdb_1) %>%   # starts a lazy ddbs object (in memory)
-  rename(geom = geo) %>%    # GDAL defaults to "geom" for the geometry column, it is better to get rid of the ESRI conventions before thay cause pain
+# if (file_exists(fdb_1)) file_delete(fdb_1)
+with_envvar(  # serialize the gdb into an fdb as is -- skipping all validation attampts at this point
+  new =  c("OGR_ORGANIZE_POLYGONS" = "SKIP"),
+  code = gdal_utils(util= "vectortranslate", source = gdb_1, destination= fdb_1,  
+                    options= c("-f", "FlatGeobuf", "-overwrite", "arealregnskap")) %>%
+           time_pipe() %>% invisible() # super fast on server, ~50s on local pc 
+  )
+
+tbl(conn_gk, sql(paste0("SELECT * FROM ST_Read('", fdb_1, "')"))) %>% 
+  # rename(geom = geo) %>%    # GDAL defaults to "geom" for the geometry column, it is better to get rid of the ESRI conventions before thay cause pain 
+                              #  -- this is not necessary after passign the data through the FlatGeobuf file
   mutate(f_id= fid_1) %>%  # fylkes are used as "tiles" -- using fid or fID as colname would be in conflict with GeoPackage primary key(!)
   # mutate(eID= okosystemtype_kode %>% str_split_i(fixed("."), 1) %>% as.numeric %>% sprintf('e%02d', .)) %>%
   mutate(e_id= sql("'e' || lpad(split_part(okosystemtype_kode, '.', 1), 2, '0')")) %>% # the dbplyr-compatible version of the line above
+  mutate(geom = sql("ST_MakeValid(geom)")) %>% # we need this here to make up for the bypassed validations at gdb import 
   select(f_id, e_id, et_name= okosystemtype_1, areal_m2, geom) %>% 
-  ddbs_write_table(conn= conn_gk, name= "gk_raw", overwrite =T) %>% # evaluates the lazy object & save it to the DB
-  time_pipe() # puts the whole pipe into a timing wrapper   ~30s
+  compute(name = "gk_raw", temporary = FALSE, overwrite = TRUE) %>%
+  time_pipe() %>% invisible() #  server: ~30s, local: ~5 min
 
 crs_1 <- as_duckspatial_df("gk_raw", conn=conn_gk) %>% ddbs_crs() 
 # crs_1 <- st_read(gdb_1, query = "SELECT * FROM arealregnskap LIMIT 10") %>% st_crs()
@@ -244,11 +256,8 @@ if (F) { ### Optional DB inspections
   # ... but a few still remain, plus some very narrow channels & small islands -- these are still "nuisance" from an EC perspective)
   }
 
-ddbs_list_tables(conn_gk)
-conn_gk %>% dbGetQuery("PRAGMA database_size;") %>% print()
+#-- placeholder: the the end of the paralell/mirai/etc -optimised cycle
 
-#
-# Visual smoke tests
-exec(h_zoomplot, "gk_DE", !!!(zoom1))   
-exec(h_zoomplot, "gk_valid", "e_id", !!!(zoom1))  # gk_valid no: visible difference (as expected)
+
+
 
