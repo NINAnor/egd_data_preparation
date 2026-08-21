@@ -15,8 +15,8 @@
 h_cleanup_db <- function(conn) {   
   walk(dbListTables(conn), 
        \(x) switch(str_sub(x, 1, 9), 
-                   temp_view= {dbExecute(conn_gk, sprintf("DROP VIEW IF EXISTS %s", dbQuoteIdentifier(conn_gk, x))); 0},
-                   temp_tabl= {dbExecute(conn_gk, sprintf("DROP TABLE IF EXISTS %s", dbQuoteIdentifier(conn_gk, x))); 0},
+                   temp_view= {dbExecute(conn, sprintf("DROP VIEW IF EXISTS %s", dbQuoteIdentifier(conn, x))); 0},
+                   temp_tabl= {dbExecute(conn, sprintf("DROP TABLE IF EXISTS %s", dbQuoteIdentifier(conn, x))); 0},
                    1))
   }
 
